@@ -15,3 +15,4 @@ class User(Base):
 
     events = relationship("Event", back_populates="owner", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
+    settings = relationship("Setting", back_populates="owner", cascade="all, delete-orphan", uselist=False)

@@ -55,4 +55,12 @@ export const constructorAPI = {
     api.post('/constructor/improve', { content, instruction }),
 };
 
+// Settings
+export const settingsAPI = {
+  get: () => api.get('/settings/'),
+  update: (data: object) => api.put('/settings/', data),
+  deleteKey: (provider: 'openai' | 'google' | 'all') =>
+    api.delete(`/settings/keys?provider=${provider}`),
+};
+
 export default api;

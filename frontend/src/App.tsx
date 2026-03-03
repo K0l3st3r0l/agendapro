@@ -6,6 +6,7 @@ import Register from './pages/Register';
 import CalendarPage from './pages/CalendarPage';
 import AIConstructor from './pages/AIConstructor';
 import Documents from './pages/Documents';
+import Settings from './pages/Settings';
 import Layout from './components/Layout';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -27,6 +28,7 @@ function App() {
             <Route path="calendario" element={<CalendarPage />} />
             <Route path="constructor" element={<AIConstructor />} />
             <Route path="documentos" element={<Documents />} />
+            <Route path="configuracion" element={<Settings />} />
           </Route>
         </Routes>
       </BrowserRouter>

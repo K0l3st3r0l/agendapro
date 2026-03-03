@@ -2,16 +2,17 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
   CalendarDaysIcon,
-  DocumentTextIcon,
   BookOpenIcon,
   ArrowRightOnRectangleIcon,
   SparklesIcon,
+  Cog6ToothIcon,
 } from '@heroicons/react/24/outline';
 
 const navItems = [
-  { to: '/calendario',  icon: CalendarDaysIcon,  label: 'Calendario' },
-  { to: '/constructor', icon: SparklesIcon,       label: 'Constructor IA' },
-  { to: '/documentos',  icon: BookOpenIcon,       label: 'Mis Documentos' },
+  { to: '/calendario',   icon: CalendarDaysIcon, label: 'Calendario' },
+  { to: '/constructor',  icon: SparklesIcon,     label: 'Constructor IA' },
+  { to: '/documentos',   icon: BookOpenIcon,     label: 'Mis Documentos' },
+  { to: '/configuracion',icon: Cog6ToothIcon,    label: 'Configuración' },
 ];
 
 export default function Layout() {

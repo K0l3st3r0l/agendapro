@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { constructorAPI } from '../services/api';
+import { useState, useEffect } from 'react';
+import { constructorAPI, settingsAPI } from '../services/api';
 import type { DocType, DocumentContent } from '../types';
 import { DOC_TYPE_CONFIG, SUBJECTS, GRADE_LEVELS } from '../types';
 import toast from 'react-hot-toast';
@@ -23,6 +23,7 @@ interface GenerateForm {
   difficulty: string;
   include_images: boolean;
   include_answers: boolean;
+  provider: 'gemini' | 'openai' | 'auto';
 }
 
 const defaultForm: GenerateForm = {
@@ -35,14 +36,20 @@ const defaultForm: GenerateForm = {
   difficulty: 'medio',
   include_images: false,
   include_answers: true,
+  provider: 'auto',
 };
 
 export default function AIConstructor() {
   const [form, setForm] = useState<GenerateForm>(defaultForm);
   const [step, setStep] = useState<Step>('form');
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ content: DocumentContent; prompt: string; images: string[] } | null>(null);
+  const [result, setResult] = useState<{ content: DocumentContent; prompt: string; images: string[]; provider_used?: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [preferredProvider, setPreferredProvider] = useState<string>('gemini');
+
+  useEffect(() => {
+    settingsAPI.get().then(r => setPreferredProvider(r.data.preferred_provider || 'gemini')).catch(() => {});
+  }, []);
 
   const set = (field: keyof GenerateForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const val = e.target.type === 'checkbox' ? (e.target as HTMLInputElement).checked :
@@ -232,6 +239,32 @@ export default function AIConstructor() {
                 />
               </div>
 
+              {/* Provider selector */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-2">Proveedor de IA</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'auto', label: 'Auto', desc: `Usa ${preferredProvider === 'gemini' ? 'Google Gemini' : 'OpenAI'} (preferido)`, emoji: '⚡' },
+                    { id: 'gemini', label: 'Google Gemini', desc: 'Gratis · Gemini 3 Flash', emoji: '🌐' },
+                    { id: 'openai', label: 'OpenAI', desc: 'GPT-4o · Mayor calidad', emoji: '🤖' },
+                  ].map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => setForm(f => ({ ...f, provider: p.id as any }))}
+                      className={`p-3 rounded-xl border-2 text-left transition-all ${
+                        form.provider === p.id
+                          ? 'border-primary-500 bg-primary-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <span className="text-lg">{p.emoji}</span>
+                      <p className="text-xs font-semibold text-gray-800 mt-1">{p.label}</p>
+                      <p className="text-xs text-gray-500">{p.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Options */}
               <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
@@ -241,7 +274,7 @@ export default function AIConstructor() {
                 <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                   <input type="checkbox" checked={form.include_images} onChange={set('include_images')} className="rounded" />
                   <PhotoIcon className="w-4 h-4 text-gray-500" />
-                  Generar imagen ilustrativa (DALL·E 3)
+                  Generar imagen ilustrativa
                 </label>
               </div>
 
@@ -276,7 +309,14 @@ export default function AIConstructor() {
             <div className="max-w-3xl mx-auto">
               {/* Actions bar */}
               <div className="flex items-center justify-between mb-4 no-print">
-                <h3 className="font-semibold text-gray-900">{result.content.title}</h3>
+                <div>
+                  <h3 className="font-semibold text-gray-900">{result.content.title}</h3>
+                  {result.provider_used && (
+                    <span className="text-xs text-gray-400">
+                      Generado con {result.provider_used === 'gemini' ? '🌐 Google Gemini' : '🤖 OpenAI'}
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <button onClick={handleSave} disabled={saving}
                     className="flex items-center gap-1.5 px-3 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60">

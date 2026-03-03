@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
-from app.api import auth, events, ai_constructor
+from app.api import auth, events, ai_constructor, settings
 import app.models  # noqa - ensure all models are registered
 
 Base.metadata.create_all(bind=engine)
@@ -23,6 +23,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(events.router)
 app.include_router(ai_constructor.router)
+app.include_router(settings.router)
 
 @app.get("/")
 def root():
