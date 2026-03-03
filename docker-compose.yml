@@ -1,0 +1,46 @@
+services:
+  frontend:
+    build: ./frontend
+    container_name: agendapro-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - agendapro-network
+      - nginx-network
+
+  backend:
+    build: ./backend
+    container_name: agendapro-backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://agendapro:${DB_PASSWORD}@db:5432/agendapro
+      - SECRET_KEY=${SECRET_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - db
+    networks:
+      - agendapro-network
+      - nginx-network
+
+  db:
+    image: postgres:16-alpine
+    container_name: agendapro-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=agendapro
+      - POSTGRES_USER=agendapro
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - agendapro-db-data:/var/lib/postgresql/data
+    networks:
+      - agendapro-network
+
+networks:
+  agendapro-network:
+    driver: bridge
+  nginx-network:
+    external: true
+
+volumes:
+  agendapro-db-data:
