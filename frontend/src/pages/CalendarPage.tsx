@@ -130,10 +130,10 @@ export default function CalendarPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-4 bg-white border-b border-gray-200 flex items-center justify-between">
+      <div className="px-6 py-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Calendario</h2>
-          <p className="text-sm text-gray-500">Gestiona tus eventos y actividades pedagógicas</p>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Calendario</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Gestiona tus eventos y actividades pedagógicas</p>
         </div>
         <button
           onClick={() => { setForm(emptyForm); setEditingId(null); setShowModal(true); }}
@@ -145,7 +145,7 @@ export default function CalendarPage() {
       </div>
 
       {/* Category Legend */}
-      <div className="px-6 py-2 bg-white border-b border-gray-100 flex flex-wrap gap-3">
+      <div className="px-6 py-2 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 flex flex-wrap gap-3">
         {Object.entries(CATEGORY_CONFIG).map(([key, { label, color }]) => (
           <div key={key} className="flex items-center gap-1.5 text-xs text-gray-600">
             <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
@@ -156,7 +156,7 @@ export default function CalendarPage() {
 
       {/* Calendar */}
       <div className="flex-1 p-4 overflow-auto">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-full p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 h-full p-4">
           <FullCalendar
             ref={calendarRef}
             plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
@@ -183,13 +183,13 @@ export default function CalendarPage() {
 
       {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h3 className="text-lg font-semibold text-gray-900">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                 {editingId ? 'Editar Evento' : 'Nuevo Evento'}
               </h3>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
                 <XMarkIcon className="w-5 h-5" />
               </button>
             </div>
@@ -197,20 +197,20 @@ export default function CalendarPage() {
             <div className="px-6 py-4 space-y-4">
               {/* Title */}
               <div>
-                <label className="text-sm font-medium text-gray-700">Título *</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Título *</label>
                 <input
                   value={form.title}
                   onChange={set('title')}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                   placeholder="Reunión de apoderados, Evaluación, etc."
                 />
               </div>
 
               {/* Category */}
               <div>
-                <label className="text-sm font-medium text-gray-700">Categoría</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Categoría</label>
                 <select value={form.category} onChange={set('category')}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none">
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
                   {Object.entries(CATEGORY_CONFIG).map(([k, { label }]) => (
                     <option key={k} value={k}>{label}</option>
                   ))}
@@ -220,18 +220,18 @@ export default function CalendarPage() {
               {/* All day */}
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="allday" checked={form.all_day} onChange={set('all_day')} className="rounded" />
-                <label htmlFor="allday" className="text-sm text-gray-700">Todo el día</label>
+                <label htmlFor="allday" className="text-sm text-gray-700 dark:text-gray-300">Todo el día</label>
               </div>
 
               {/* Dates */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-sm font-medium text-gray-700">Inicio *</label>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Inicio *</label>
                   <input
                     type={form.all_day ? 'date' : 'datetime-local'}
                     value={form.start_datetime}
                     onChange={set('start_datetime')}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                   />
                 </div>
                 <div>
@@ -240,39 +240,39 @@ export default function CalendarPage() {
                     type={form.all_day ? 'date' : 'datetime-local'}
                     value={form.end_datetime}
                     onChange={set('end_datetime')}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                   />
                 </div>
               </div>
 
               {/* Description */}
               <div>
-                <label className="text-sm font-medium text-gray-700">Descripción</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Descripción</label>
                 <textarea
                   value={form.description}
                   onChange={set('description')}
                   rows={3}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none resize-none"
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none resize-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                   placeholder="Detalles del evento..."
                 />
               </div>
 
               {/* Location */}
               <div>
-                <label className="text-sm font-medium text-gray-700">Lugar</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Lugar</label>
                 <input
                   value={form.location}
                   onChange={set('location')}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                   placeholder="Sala 3B, Biblioteca, Zoom..."
                 />
               </div>
 
               {/* Alert */}
               <div>
-                <label className="text-sm font-medium text-gray-700">Alerta (minutos antes)</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Alerta (minutos antes)</label>
                 <select value={form.alert_minutes || ''} onChange={set('alert_minutes')}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none">
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
                   <option value="">Sin alerta</option>
                   <option value={5}>5 minutos</option>
                   <option value={15}>15 minutos</option>
@@ -284,7 +284,7 @@ export default function CalendarPage() {
             </div>
 
             {/* Actions */}
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+            <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between">
               <div>
                 {editingId && (
                   <button onClick={handleDelete} className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700">
@@ -293,7 +293,7 @@ export default function CalendarPage() {
                 )}
               </div>
               <div className="flex gap-2">
-                <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg">
+                <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-transparent">
                   Cancelar
                 </button>
                 <button onClick={handleSave} disabled={loading}

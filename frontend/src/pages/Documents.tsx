@@ -66,27 +66,27 @@ export default function Documents() {
   );
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="px-6 py-4 bg-white border-b border-gray-200">
-        <h2 className="text-xl font-semibold text-gray-900">Mis Documentos</h2>
-        <p className="text-sm text-gray-500">Documentos generados y guardados</p>
+    <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
+      <div className="px-6 py-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Mis Documentos</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Documentos generados y guardados</p>
       </div>
 
       {/* Filters */}
-      <div className="px-6 py-3 bg-white border-b border-gray-100 flex items-center gap-3 flex-wrap">
+      <div className="px-6 py-3 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 flex items-center gap-3 flex-wrap">
         <div className="relative">
-          <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar documentos..."
-            className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none w-56"
+            className="pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none w-56 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500"
           />
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => setFilter('')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium ${!filter ? 'bg-primary-100 text-primary-700' : 'text-gray-600 hover:bg-gray-100'}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium ${!filter ? 'bg-primary-100 text-primary-700' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
           >
             Todos
           </button>
@@ -94,7 +94,7 @@ export default function Documents() {
             <button
               key={type}
               onClick={() => setFilter(type)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 ${filter === type ? 'bg-primary-100 text-primary-700' : 'text-gray-600 hover:bg-gray-100'}`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 ${filter === type ? 'bg-primary-100 text-primary-700' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
             >
               {DOC_TYPE_CONFIG[type].icon} {DOC_TYPE_CONFIG[type].label}
             </button>
@@ -103,21 +103,21 @@ export default function Documents() {
       </div>
 
       {/* List */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-6 bg-gray-50 dark:bg-gray-900">
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
           </div>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-16 text-gray-400">
+          <div className="text-center py-16 text-gray-400 dark:text-gray-500">
             <p className="text-4xl mb-3">📄</p>
-            <p className="font-medium">No hay documentos guardados</p>
+            <p className="font-medium text-gray-500 dark:text-gray-400">No hay documentos guardados</p>
             <p className="text-sm mt-1">Ve al Constructor IA para crear y guardar documentos</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map(doc => (
-              <div key={doc.id} className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow">
+              <div key={doc.id} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow">
                 <div className="flex items-start justify-between mb-3">
                   <span className="text-2xl">{DOC_TYPE_CONFIG[doc.doc_type]?.icon}</span>
                   <div className="flex gap-1">
@@ -129,11 +129,11 @@ export default function Documents() {
                     </button>
                   </div>
                 </div>
-                <h4 className="font-medium text-gray-900 text-sm line-clamp-2 mb-2">{doc.title}</h4>
+                <h4 className="font-medium text-gray-900 dark:text-white text-sm line-clamp-2 mb-2">{doc.title}</h4>
                 <div className="space-y-1">
-                  {doc.subject && <p className="text-xs text-gray-500">📚 {doc.subject}</p>}
-                  {doc.grade_level && <p className="text-xs text-gray-500">🎓 {doc.grade_level}</p>}
-                  <p className="text-xs text-gray-400">
+                  {doc.subject && <p className="text-xs text-gray-500 dark:text-gray-400">📚 {doc.subject}</p>}
+                  {doc.grade_level && <p className="text-xs text-gray-500 dark:text-gray-400">🎓 {doc.grade_level}</p>}
+                  <p className="text-xs text-gray-400 dark:text-gray-500">
                     {format(new Date(doc.created_at), "d MMM yyyy", { locale: es })}
                   </p>
                 </div>
@@ -146,14 +146,14 @@ export default function Documents() {
       {/* Document Modal */}
       {selected && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white">
-              <h3 className="font-semibold text-gray-900">{selected.title}</h3>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-800">
+              <h3 className="font-semibold text-gray-900 dark:text-white">{selected.title}</h3>
               <div className="flex gap-2">
                 <button onClick={() => window.print()} className="text-sm px-3 py-1.5 bg-gray-700 text-white rounded-lg">
                   Imprimir
                 </button>
-                <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-sm px-3 py-1.5 border rounded-lg">
+                <button onClick={() => setSelected(null)} className="text-gray-400 dark:text-gray-300 hover:text-gray-600 dark:hover:text-white text-sm px-3 py-1.5 border border-gray-200 dark:border-gray-600 rounded-lg">
                   Cerrar
                 </button>
               </div>
@@ -161,12 +161,12 @@ export default function Documents() {
             <div className="p-6">
               {selected.content?.sections?.map((section: any, idx: number) => (
                 <div key={idx} className="mb-4">
-                  {section.title && <h4 className="font-semibold text-gray-800 mb-2">{section.title}</h4>}
+                  {section.title && <h4 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">{section.title}</h4>}
                   {typeof section.content === 'string' && (
-                    <p className="text-sm text-gray-700 whitespace-pre-line">{section.content}</p>
+                    <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line">{section.content}</p>
                   )}
                   {Array.isArray(section.content) && section.content.map((item: any, i: number) => (
-                    <div key={i} className="mb-2 p-2 bg-gray-50 rounded text-sm">
+                    <div key={i} className="mb-2 p-2 bg-gray-50 dark:bg-gray-700/50 rounded text-sm dark:text-gray-300">
                       {typeof item === 'string' ? `${i + 1}. ${item}` : (
                         <div>
                           <p>{item.number || i + 1}. {item.text}</p>

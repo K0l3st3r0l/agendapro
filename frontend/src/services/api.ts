@@ -47,7 +47,13 @@ export const eventsAPI = {
 // AI Constructor
 export const constructorAPI = {
   generate: (data: object) => api.post('/constructor/generate', data),
+  optimizeInstructions: (data: object) => api.post('/constructor/optimize-instructions', data),
   save: (data: object) => api.post('/constructor/save', data),
+  saveToCalendar: (data: object) => api.post('/constructor/save-to-calendar', data),
+  generateImage: (data: object) => api.post('/constructor/generate-image', data),
+  searchImages: (data: object) => api.post('/constructor/search-images', data, { timeout: 90000 }),
+  exportPdf: (data: object) => api.post('/constructor/export-pdf', data, { responseType: 'blob' }),
+  exportDocx: (data: object) => api.post('/constructor/export-docx', data, { responseType: 'blob' }),
   getDocuments: (doc_type?: string) => api.get('/constructor/documents', { params: { doc_type } }),
   getDocument: (id: number) => api.get(`/constructor/documents/${id}`),
   deleteDocument: (id: number) => api.delete(`/constructor/documents/${id}`),
@@ -59,7 +65,7 @@ export const constructorAPI = {
 export const settingsAPI = {
   get: () => api.get('/settings/'),
   update: (data: object) => api.put('/settings/', data),
-  deleteKey: (provider: 'openai' | 'google' | 'all') =>
+  deleteKey: (provider: 'openai' | 'google' | 'xai' | 'all') =>
     api.delete(`/settings/keys?provider=${provider}`),
 };
 

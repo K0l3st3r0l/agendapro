@@ -25,14 +25,150 @@
   @apply border-gray-200;
 }
 
+/* FullCalendar dark mode */
+.dark .fc .fc-toolbar-title {
+  @apply text-gray-100;
+}
+.dark .fc .fc-col-header-cell-cushion,
+.dark .fc .fc-daygrid-day-number {
+  @apply text-gray-300;
+}
+.dark .fc-theme-standard td,
+.dark .fc-theme-standard th {
+  @apply border-gray-700;
+}
+.dark .fc .fc-daygrid-day {
+  @apply bg-gray-800;
+}
+.dark .fc .fc-day-today {
+  background-color: rgba(37, 99, 235, 0.2) !important;
+}
+.dark .fc .fc-day-other .fc-daygrid-day-number {
+  @apply text-gray-600;
+}
+.dark .fc .fc-scrollgrid {
+  @apply border-gray-700;
+}
+/* Toolbar buttons */
+.dark .fc .fc-button {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+  color: #e5e7eb !important;
+}
+.dark .fc .fc-button:hover {
+  background-color: #4b5563 !important;
+  border-color: #6b7280 !important;
+}
+.dark .fc .fc-button-primary:not(:disabled).fc-button-active,
+.dark .fc .fc-button-primary:not(:disabled):active {
+  background-color: #2563eb !important;
+  border-color: #2563eb !important;
+  color: white !important;
+}
+/* Time grid */
+.dark .fc .fc-timegrid-slot {
+  @apply border-gray-700;
+}
+.dark .fc .fc-timegrid-axis,
+.dark .fc .fc-timegrid-slot-label {
+  @apply text-gray-400;
+}
+.dark .fc .fc-timegrid-col {
+  @apply bg-gray-800;
+}
+/* List view */
+.dark .fc .fc-list-day-cushion {
+  @apply bg-gray-700;
+}
+.dark .fc .fc-list-day-text,
+.dark .fc .fc-list-day-side-text {
+  @apply text-gray-200;
+}
+.dark .fc .fc-list-event:hover td {
+  @apply bg-gray-700;
+}
+.dark .fc .fc-list-event td {
+  @apply border-gray-700 text-gray-300;
+}
+.dark .fc .fc-list-empty {
+  @apply bg-gray-800 text-gray-400;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { @apply bg-gray-100; }
 ::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
 ::-webkit-scrollbar-thumb:hover { @apply bg-gray-400; }
 
+.dark ::-webkit-scrollbar-track { @apply bg-gray-800; }
+.dark ::-webkit-scrollbar-thumb { @apply bg-gray-600; }
+.dark ::-webkit-scrollbar-thumb:hover { @apply bg-gray-500; }
+
 /* Print styles */
+@page {
+  size: Letter;
+  margin: 15mm 18mm 15mm 18mm;
+}
+
 @media print {
-  nav, .no-print { display: none !important; }
-  .print-content { display: block !important; }
+  /* Ocultar todo y mostrar solo el documento */
+  body * { visibility: hidden; }
+  .no-print, .no-print * { display: none !important; }
+
+  .print-content, .print-content * {
+    visibility: visible !important;
+  }
+
+  .print-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 16px 0 0 0;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    background: white !important;
+    color: black !important;
+    font-size: 11pt;
+  }
+
+  /* Forzar texto negro */
+  .print-content h1,
+  .print-content h2,
+  .print-content h3,
+  .print-content h4,
+  .print-content p,
+  .print-content li,
+  .print-content span,
+  .print-content div {
+    color: black !important;
+    background: transparent !important;
+  }
+
+  /* Evitar cortes en medio de secciones/preguntas */
+  .print-content .mb-6,
+  .print-content .mb-3,
+  .print-content .p-3 {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Bordes visibles en impresión */
+  .print-content .border {
+    border-color: #999 !important;
+  }
+
+  /* Reducir padding/margin para aprovechar la hoja */
+  .print-content .p-8 {
+    padding: 0 !important;
+  }
+
+  /* Imágenes no se parten entre páginas */
+  .print-content img {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    max-height: 120mm;
+  }
 }
