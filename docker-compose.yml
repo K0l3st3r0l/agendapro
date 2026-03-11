@@ -17,6 +17,11 @@ services:
       - DATABASE_URL=postgresql://agendapro:${DB_PASSWORD}@db:5432/agendapro
       - SECRET_KEY=${SECRET_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - XAI_API_KEY=${XAI_API_KEY:-}
+      - ALLOW_REGISTRATION=false
+    volumes:
+      - agendapro-static:/app/static
     depends_on:
       - db
     networks:
@@ -44,3 +49,4 @@ networks:
 
 volumes:
   agendapro-db-data:
+  agendapro-static:
