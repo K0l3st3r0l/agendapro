@@ -1,0 +1,3 @@
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS gemini_model VARCHAR DEFAULT 'gemini-2.0-flash';
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS openai_model VARCHAR DEFAULT 'gpt-4o';
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS xai_model VARCHAR DEFAULT 'grok-3-mini';

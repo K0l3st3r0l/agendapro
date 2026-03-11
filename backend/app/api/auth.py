@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
@@ -25,6 +26,8 @@ class UserResponse(BaseModel):
 
 @router.post("/register")
 def register(req: RegisterRequest, db: Session = Depends(get_db)):
+    if os.getenv("ALLOW_REGISTRATION", "true").lower() != "true":
+        raise HTTPException(status_code=403, detail="El registro de nuevos usuarios está desactivado")
     if db.query(User).filter(User.email == req.email).first():
         raise HTTPException(status_code=400, detail="El email ya está registrado")
     user = User(

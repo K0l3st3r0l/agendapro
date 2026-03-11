@@ -1,10 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.database import engine, Base
 from app.api import auth, events, ai_constructor, settings
 import app.models  # noqa - ensure all models are registered
+import os
 
 Base.metadata.create_all(bind=engine)
+
+os.makedirs("/app/static/images", exist_ok=True)
 
 app = FastAPI(
     title="AgendaPro API",
@@ -24,6 +28,8 @@ app.include_router(auth.router)
 app.include_router(events.router)
 app.include_router(ai_constructor.router)
 app.include_router(settings.router)
+
+app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 @app.get("/")
 def root():

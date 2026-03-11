@@ -10,7 +10,12 @@ class Setting(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
     openai_api_key = Column(String, nullable=True)
     google_api_key = Column(String, nullable=True)
-    preferred_provider = Column(String, default="gemini")  # gemini | openai
+    xai_api_key = Column(String, nullable=True)
+    preferred_provider = Column(String, default="gemini")  # gemini | openai | xai
+    gemini_model = Column(String, default="gemini-2.5-flash")
+    gemini_image_model = Column(String, default="gemini-2.0-flash-preview-image-generation")
+    openai_model = Column(String, default="gpt-4o")
+    xai_model = Column(String, default="grok-3-mini")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner = relationship("User", back_populates="settings")
