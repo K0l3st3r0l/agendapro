@@ -6,11 +6,15 @@ import listPlugin from '@fullcalendar/list';
 import interactionPlugin from '@fullcalendar/interaction';
 import esLocale from '@fullcalendar/core/locales/es';
 import { eventsAPI } from '../services/api';
-import type { CalendarEvent, EventCategory, EventFormData } from '../types';
+import type { CalendarEvent, EventFormData } from '../types';
 import { CATEGORY_CONFIG } from '../types';
 import toast from 'react-hot-toast';
-import { PlusIcon, XMarkIcon, TrashIcon } from '@heroicons/react/24/outline';
-import { format } from 'date-fns';
+import { PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import PageHeader from '../components/ui/PageHeader';
+import AppDialog from '../components/ui/AppDialog';
+import { Button } from '../components/ui/Button';
+import { ErrorPanel, LoadingPanel } from '../components/ui/StatePanel';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 const emptyForm: EventFormData = {
   title: '',
@@ -24,24 +28,42 @@ const emptyForm: EventFormData = {
   recurrence: 'none',
 };
 
+const inputClass =
+  'mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100';
+
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [loadState, setLoadState] = useState<'loading' | 'error' | 'ready'>('loading');
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<EventFormData>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [mobileView, setMobileView] = useState<'listWeek' | 'dayGridMonth'>('listWeek');
   const calendarRef = useRef<FullCalendar>(null);
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  const wasDesktop = useRef(isDesktop);
 
   useEffect(() => {
     fetchEvents();
   }, []);
 
+  useEffect(() => {
+    if (wasDesktop.current === isDesktop) return;
+    wasDesktop.current = isDesktop;
+    const api = calendarRef.current?.getApi();
+    if (!api) return;
+    api.changeView(isDesktop ? 'dayGridMonth' : mobileView);
+  }, [isDesktop]);
+
   const fetchEvents = async () => {
+    setLoadState('loading');
     try {
       const res = await eventsAPI.getAll();
       setEvents(res.data);
+      setLoadState('ready');
     } catch {
-      toast.error('Error al cargar eventos');
+      setLoadState('error');
     }
   };
 
@@ -87,9 +109,15 @@ export default function CalendarPage() {
     setShowModal(true);
   };
 
-  const handleSave = async () => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!form.title.trim()) { toast.error('El título es requerido'); return; }
-    setLoading(true);
+    if (!form.start_datetime) { toast.error('La fecha de inicio es requerida'); return; }
+    if (form.end_datetime && form.end_datetime < form.start_datetime) {
+      toast.error('La fecha de fin debe ser posterior al inicio');
+      return;
+    }
+    setSaving(true);
     try {
       if (editingId) {
         await eventsAPI.update(editingId, form);
@@ -105,13 +133,14 @@ export default function CalendarPage() {
     } catch {
       toast.error('Error al guardar evento');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   const handleDelete = async () => {
     if (!editingId) return;
     if (!confirm('¿Eliminar este evento?')) return;
+    setDeleting(true);
     try {
       await eventsAPI.delete(editingId);
       toast.success('Evento eliminado');
@@ -119,6 +148,8 @@ export default function CalendarPage() {
       setShowModal(false);
     } catch {
       toast.error('Error al eliminar');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -127,184 +158,201 @@ export default function CalendarPage() {
     setForm(f => ({ ...f, [field]: value }));
   };
 
+  const openNewEventModal = () => { setForm(emptyForm); setEditingId(null); setShowModal(true); };
+
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="px-6 py-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Calendario</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Gestiona tus eventos y actividades pedagógicas</p>
-        </div>
-        <button
-          onClick={() => { setForm(emptyForm); setEditingId(null); setShowModal(true); }}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 transition-colors"
-        >
-          <PlusIcon className="w-4 h-4" />
-          Nuevo Evento
-        </button>
-      </div>
+      <PageHeader
+        title="Calendario"
+        description="Gestiona tus eventos y actividades pedagógicas"
+        actions={
+          <Button onClick={openNewEventModal}>
+            <PlusIcon className="w-4 h-4" />
+            Nuevo Evento
+          </Button>
+        }
+      />
 
       {/* Category Legend */}
-      <div className="px-6 py-2 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 flex flex-wrap gap-3">
+      <div className="px-4 sm:px-6 py-2 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 flex flex-nowrap sm:flex-wrap gap-3 overflow-x-auto">
         {Object.entries(CATEGORY_CONFIG).map(([key, { label, color }]) => (
-          <div key={key} className="flex items-center gap-1.5 text-xs text-gray-600">
+          <div key={key} className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap flex-shrink-0">
             <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
             {label}
           </div>
         ))}
       </div>
 
-      {/* Calendar */}
-      <div className="flex-1 p-4 overflow-auto">
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 h-full p-4">
-          <FullCalendar
-            ref={calendarRef}
-            plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
-            initialView="dayGridMonth"
-            locale={esLocale}
-            headerToolbar={{
-              left: 'prev,next today',
-              center: 'title',
-              right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek',
-            }}
-            buttonText={{ today: 'Hoy', month: 'Mes', week: 'Semana', day: 'Día', list: 'Lista' }}
-            events={events.map(toFCEvent)}
-            selectable={true}
-            selectMirror={true}
-            dayMaxEvents={3}
-            weekends={true}
-            select={handleDateSelect}
-            eventClick={handleEventClick}
-            height="100%"
-            eventDisplay="block"
-          />
-        </div>
+      {/* Mobile view toggle */}
+      <div className="lg:hidden px-4 sm:px-6 py-2 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 flex gap-2">
+        {([
+          { id: 'listWeek', label: 'Agenda' },
+          { id: 'dayGridMonth', label: 'Mes' },
+        ] as const).map(v => (
+          <button
+            key={v.id}
+            onClick={() => { setMobileView(v.id); calendarRef.current?.getApi()?.changeView(v.id); }}
+            className={`flex-1 min-h-[40px] px-3 py-1.5 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+              mobileView === v.id
+                ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-400'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            {v.label}
+          </button>
+        ))}
       </div>
 
-      {/* Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                {editingId ? 'Editar Evento' : 'Nuevo Evento'}
-              </h3>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-                <XMarkIcon className="w-5 h-5" />
-              </button>
-            </div>
+      {/* Calendar */}
+      <div className="flex-1 p-2 sm:p-4 overflow-auto">
+        {loadState === 'loading' ? (
+          <LoadingPanel label="Cargando calendario..." />
+        ) : loadState === 'error' ? (
+          <ErrorPanel message="No se pudieron cargar los eventos." onRetry={fetchEvents} />
+        ) : (
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 h-full p-2 sm:p-4">
+            <FullCalendar
+              ref={calendarRef}
+              plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+              initialView={isDesktop ? 'dayGridMonth' : mobileView}
+              locale={esLocale}
+              headerToolbar={isDesktop ? {
+                left: 'prev,next today',
+                center: 'title',
+                right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek',
+              } : {
+                left: 'prev,next',
+                center: 'title',
+                right: 'today',
+              }}
+              buttonText={{ today: 'Hoy', month: 'Mes', week: 'Semana', day: 'Día', list: 'Lista' }}
+              events={events.map(toFCEvent)}
+              selectable={true}
+              selectMirror={true}
+              dayMaxEvents={3}
+              weekends={true}
+              select={handleDateSelect}
+              eventClick={handleEventClick}
+              datesSet={(arg) => {
+                if (arg.view.type === 'listWeek' || arg.view.type === 'dayGridMonth') {
+                  setMobileView(arg.view.type as 'listWeek' | 'dayGridMonth');
+                }
+              }}
+              height="100%"
+              eventDisplay="block"
+            />
+          </div>
+        )}
+      </div>
 
-            <div className="px-6 py-4 space-y-4">
-              {/* Title */}
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Título *</label>
-                <input
-                  value={form.title}
-                  onChange={set('title')}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                  placeholder="Reunión de apoderados, Evaluación, etc."
-                />
-              </div>
-
-              {/* Category */}
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Categoría</label>
-                <select value={form.category} onChange={set('category')}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
-                  {Object.entries(CATEGORY_CONFIG).map(([k, { label }]) => (
-                    <option key={k} value={k}>{label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* All day */}
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="allday" checked={form.all_day} onChange={set('all_day')} className="rounded" />
-                <label htmlFor="allday" className="text-sm text-gray-700 dark:text-gray-300">Todo el día</label>
-              </div>
-
-              {/* Dates */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Inicio *</label>
-                  <input
-                    type={form.all_day ? 'date' : 'datetime-local'}
-                    value={form.start_datetime}
-                    onChange={set('start_datetime')}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Fin</label>
-                  <input
-                    type={form.all_day ? 'date' : 'datetime-local'}
-                    value={form.end_datetime}
-                    onChange={set('end_datetime')}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                  />
-                </div>
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Descripción</label>
-                <textarea
-                  value={form.description}
-                  onChange={set('description')}
-                  rows={3}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none resize-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                  placeholder="Detalles del evento..."
-                />
-              </div>
-
-              {/* Location */}
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Lugar</label>
-                <input
-                  value={form.location}
-                  onChange={set('location')}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                  placeholder="Sala 3B, Biblioteca, Zoom..."
-                />
-              </div>
-
-              {/* Alert */}
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Alerta (minutos antes)</label>
-                <select value={form.alert_minutes || ''} onChange={set('alert_minutes')}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
-                  <option value="">Sin alerta</option>
-                  <option value={5}>5 minutos</option>
-                  <option value={15}>15 minutos</option>
-                  <option value={30}>30 minutos</option>
-                  <option value={60}>1 hora</option>
-                  <option value={1440}>1 día antes</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between">
-              <div>
-                {editingId && (
-                  <button onClick={handleDelete} className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700">
-                    <TrashIcon className="w-4 h-4" /> Eliminar
-                  </button>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-transparent">
-                  Cancelar
-                </button>
-                <button onClick={handleSave} disabled={loading}
-                  className="px-4 py-2 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-60 font-medium">
-                  {loading ? 'Guardando...' : editingId ? 'Actualizar' : 'Crear Evento'}
-                </button>
-              </div>
+      <AppDialog
+        open={showModal}
+        onClose={() => setShowModal(false)}
+        title={editingId ? 'Editar Evento' : 'Nuevo Evento'}
+        maxWidth="lg"
+        footer={
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            {editingId && (
+              <Button variant="danger" type="button" onClick={handleDelete} busy={deleting} className="w-full sm:w-auto">
+                <TrashIcon className="w-4 h-4" /> {deleting ? 'Eliminando...' : 'Eliminar'}
+              </Button>
+            )}
+            <div className="flex flex-col sm:flex-row gap-2 sm:ml-auto">
+              <Button variant="secondary" type="button" onClick={() => setShowModal(false)} className="w-full sm:w-auto">
+                Cancelar
+              </Button>
+              <Button type="submit" form="event-form" busy={saving} className="w-full sm:w-auto">
+                {saving ? 'Guardando...' : editingId ? 'Actualizar' : 'Crear Evento'}
+              </Button>
             </div>
           </div>
-        </div>
-      )}
+        }
+      >
+        <form id="event-form" onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="ev-title" className="text-sm font-medium text-gray-700 dark:text-gray-300">Título *</label>
+            <input
+              id="ev-title"
+              value={form.title}
+              onChange={set('title')}
+              className={inputClass}
+              placeholder="Reunión de apoderados, Evaluación, etc."
+            />
+          </div>
+
+          <div>
+            <label htmlFor="ev-category" className="text-sm font-medium text-gray-700 dark:text-gray-300">Categoría</label>
+            <select id="ev-category" value={form.category} onChange={set('category')} className={inputClass}>
+              {Object.entries(CATEGORY_CONFIG).map(([k, { label }]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="ev-allday" checked={form.all_day} onChange={set('all_day')} className="w-4 h-4 rounded" />
+            <label htmlFor="ev-allday" className="text-sm text-gray-700 dark:text-gray-300">Todo el día</label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="ev-start" className="text-sm font-medium text-gray-700 dark:text-gray-300">Inicio *</label>
+              <input
+                id="ev-start"
+                type={form.all_day ? 'date' : 'datetime-local'}
+                value={form.start_datetime}
+                onChange={set('start_datetime')}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label htmlFor="ev-end" className="text-sm font-medium text-gray-700 dark:text-gray-300">Fin</label>
+              <input
+                id="ev-end"
+                type={form.all_day ? 'date' : 'datetime-local'}
+                value={form.end_datetime}
+                onChange={set('end_datetime')}
+                className={inputClass}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="ev-description" className="text-sm font-medium text-gray-700 dark:text-gray-300">Descripción</label>
+            <textarea
+              id="ev-description"
+              value={form.description}
+              onChange={set('description')}
+              rows={3}
+              className={`${inputClass} resize-none`}
+              placeholder="Detalles del evento..."
+            />
+          </div>
+
+          <div>
+            <label htmlFor="ev-location" className="text-sm font-medium text-gray-700 dark:text-gray-300">Lugar</label>
+            <input
+              id="ev-location"
+              value={form.location}
+              onChange={set('location')}
+              className={inputClass}
+              placeholder="Sala 3B, Biblioteca, Zoom..."
+            />
+          </div>
+
+          <div>
+            <label htmlFor="ev-alert" className="text-sm font-medium text-gray-700 dark:text-gray-300">Alerta (minutos antes)</label>
+            <select id="ev-alert" value={form.alert_minutes || ''} onChange={set('alert_minutes')} className={inputClass}>
+              <option value="">Sin alerta</option>
+              <option value={5}>5 minutos</option>
+              <option value={15}>15 minutos</option>
+              <option value={30}>30 minutos</option>
+              <option value={60}>1 hora</option>
+              <option value={1440}>1 día antes</option>
+            </select>
+          </div>
+        </form>
+      </AppDialog>
     </div>
   );
 }

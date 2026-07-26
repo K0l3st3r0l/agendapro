@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { CalendarDaysIcon } from '@heroicons/react/24/outline';
+import { ALLOW_REGISTRATION } from '../config/env';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -37,9 +38,12 @@ export default function Login() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Correo electrónico</label>
+            <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Correo electrónico</label>
             <input
+              id="login-email"
+              name="email"
               type="email"
+              autoComplete="username"
               value={email}
               onChange={e => setEmail(e.target.value)}
               required
@@ -48,9 +52,12 @@ export default function Login() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Contraseña</label>
+            <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Contraseña</label>
             <input
+              id="login-password"
+              name="password"
               type="password"
+              autoComplete="current-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
@@ -61,16 +68,18 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg text-sm transition-colors disabled:opacity-60"
+            className="w-full min-h-[44px] py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg text-sm transition-colors disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800"
           >
             {loading ? 'Ingresando...' : 'Ingresar'}
           </button>
         </form>
 
-        <p className="text-center text-sm text-gray-500 dark:text-gray-400 mt-6">
-          ¿No tienes cuenta?{' '}
-          <Link to="/register" className="text-primary-600 hover:underline font-medium">Regístrate</Link>
-        </p>
+        {ALLOW_REGISTRATION && (
+          <p className="text-center text-sm text-gray-500 dark:text-gray-400 mt-6">
+            ¿No tienes cuenta?{' '}
+            <Link to="/register" className="text-primary-600 hover:underline font-medium">Regístrate</Link>
+          </p>
+        )}
       </div>
     </div>
   );

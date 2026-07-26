@@ -89,7 +89,7 @@ temp/
 *.pth
 *.bin
 *.onnx
-models/
+/models/
 *.pkl
 *.pickle
 

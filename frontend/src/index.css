@@ -2,6 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100;
+  }
+
+  /* Visible keyboard focus everywhere; mouse/touch clicks stay clean. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 dark:ring-offset-gray-800;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
 /* FullCalendar custom overrides */
 .fc {
   @apply font-sans;
@@ -11,6 +39,9 @@
 }
 .fc .fc-button-primary {
   @apply bg-primary-600 border-primary-600 hover:bg-primary-700;
+}
+.fc .fc-button-primary:focus-visible {
+  @apply outline-none ring-2 ring-primary-300 ring-offset-1;
 }
 .fc .fc-day-today {
   @apply bg-primary-50 !important;
@@ -23,6 +54,26 @@
 }
 .fc-theme-standard td, .fc-theme-standard th {
   @apply border-gray-200;
+}
+
+/* Mobile: compact toolbar, stack title below prev/next/today, larger tap targets */
+@media (max-width: 640px) {
+  .fc .fc-toolbar {
+    @apply flex-col items-stretch gap-2;
+  }
+  .fc .fc-toolbar-chunk {
+    @apply flex justify-center;
+  }
+  .fc .fc-toolbar-title {
+    @apply text-base;
+  }
+  .fc .fc-button {
+    @apply px-2.5 py-2 text-sm;
+  }
+  .fc .fc-daygrid-day-number,
+  .fc .fc-col-header-cell-cushion {
+    @apply text-xs;
+  }
 }
 
 /* FullCalendar dark mode */

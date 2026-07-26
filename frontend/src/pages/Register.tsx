@@ -1,14 +1,24 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { CalendarDaysIcon } from '@heroicons/react/24/outline';
+import { ALLOW_REGISTRATION } from '../config/env';
+
+const AUTOCOMPLETE: Record<string, string> = {
+  name: 'name',
+  email: 'username',
+  password: 'new-password',
+  confirm: 'new-password',
+};
 
 export default function Register() {
   const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '' });
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
   const navigate = useNavigate();
+
+  if (!ALLOW_REGISTRATION) return <Navigate to="/login" replace />;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,9 +60,12 @@ export default function Register() {
             { label: 'Confirmar contraseña', field: 'confirm', type: 'password', placeholder: '••••••••' },
           ].map(({ label, field, type, placeholder }) => (
             <div key={field}>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+              <label htmlFor={`register-${field}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
               <input
+                id={`register-${field}`}
+                name={field}
                 type={type}
+                autoComplete={AUTOCOMPLETE[field]}
                 value={form[field as keyof typeof form]}
                 onChange={set(field)}
                 required
@@ -64,7 +77,7 @@ export default function Register() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg text-sm transition-colors disabled:opacity-60"
+            className="w-full min-h-[44px] py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg text-sm transition-colors disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800"
           >
             {loading ? 'Creando cuenta...' : 'Crear cuenta'}
           </button>

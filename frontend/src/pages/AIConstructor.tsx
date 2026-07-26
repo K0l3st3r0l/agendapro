@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
-import { constructorAPI, settingsAPI } from '../services/api';
-import type { DocType, DocumentContent } from '../types';
+import { useState, useEffect, useRef } from 'react';
+import { constructorAPI, settingsAPI, eventsAPI } from '../services/api';
+import type { DocType, DocumentContent, EventCategory } from '../types';
 import { DOC_TYPE_CONFIG, SUBJECTS, GRADE_LEVELS } from '../types';
+import { PROVIDERS, providerLabel, providerEmoji } from '../config/providers';
+import type { AIProvider } from '../config/providers';
 import toast from 'react-hot-toast';
 import {
   SparklesIcon,
@@ -11,8 +13,12 @@ import {
   PhotoIcon,
   CalendarDaysIcon,
   ArrowDownTrayIcon,
-  XMarkIcon,
+  CheckCircleIcon,
 } from '@heroicons/react/24/outline';
+import PageHeader from '../components/ui/PageHeader';
+import AppDialog from '../components/ui/AppDialog';
+import { Button } from '../components/ui/Button';
+import DocumentPreview from '../components/DocumentPreview';
 
 type Step = 'form' | 'result';
 
@@ -26,7 +32,7 @@ interface GenerateForm {
   difficulty: string;
   include_images: boolean;
   include_answers: boolean;
-  provider: 'gemini' | 'openai' | 'xai' | 'auto';
+  provider: AIProvider;
 }
 
 const defaultForm: GenerateForm = {
@@ -41,6 +47,23 @@ const defaultForm: GenerateForm = {
   include_answers: true,
   provider: 'auto',
 };
+
+const selectClass =
+  'w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100';
+
+// Mirrors backend/app/api/ai_constructor.py::save_to_calendar's category_map,
+// so events created from an already-saved document land in the same category.
+const DOC_TYPE_EVENT_CATEGORY: Record<DocType, EventCategory> = {
+  prueba: 'evaluacion',
+  evaluacion: 'evaluacion',
+  planificacion: 'planificacion',
+  guia: 'general',
+  ficha: 'general',
+};
+
+// Mirrors the backend's `f"[doc_id:{id}] {subject} - {grade}".strip(" -")` description format.
+const buildDocLinkDescription = (docId: number, subject?: string, gradeLevel?: string) =>
+  `[doc_id:${docId}] ${subject || ''} - ${gradeLevel || ''}`.replace(/^[ -]+|[ -]+$/g, '');
 
 export default function AIConstructor() {
   const [form, setForm] = useState<GenerateForm>(defaultForm);
@@ -59,10 +82,18 @@ export default function AIConstructor() {
   const [activityImages, setActivityImages] = useState<Record<string, string>>({});
   const [loadingActivityImages, setLoadingActivityImages] = useState(false);
   const [imageProgress, setImageProgress] = useState({ current: 0, total: 0 });
+  const [savedDocumentId, setSavedDocumentId] = useState<number | null>(null);
+  const [savingDocument, setSavingDocument] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     settingsAPI.get().then(r => setPreferredProvider(r.data.preferred_provider || 'gemini')).catch(() => {});
   }, []);
+
+  // Vuelve al inicio del panel scrolleable tanto al mostrar el resultado como al volver al formulario.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [step]);
 
   const set = (field: keyof GenerateForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const val = e.target.type === 'checkbox' ? (e.target as HTMLInputElement).checked :
@@ -96,26 +127,24 @@ export default function AIConstructor() {
     try {
       const res = await constructorAPI.generate(form);
       setResult(res.data);
+      setSavedDocumentId(null);
       setImageUrl(null);
       setActivityImages({});
-      // Don't switch to result step yet — load images first
-      toast.success('¡Documento generado! Generando ilustraciones...');
+      setImageProgress({ current: 0, total: 0 });
 
-      // Load activity images before showing the document
+      // Show the document immediately; illustrations load progressively in the background.
+      setStep('result');
+      toast.success('¡Documento generado!');
+
       const hasImages = res.data.content?.sections?.some((s: any) =>
         Array.isArray(s.content) && s.content.some((item: any) =>
           item && typeof item === 'object' && Array.isArray(item.image_words) && item.image_words.length > 0
         )
       );
-
       if (hasImages) {
-        await loadActivityImages(res.data.content.sections);
+        loadActivityImages(res.data.content.sections);
       }
 
-      // Now show the result
-      setStep('result');
-
-      // Load header image in background (non-blocking)
       if (res.data.images && res.data.images.length > 0) {
         setImageUrl(res.data.images[0]);
       } else if (form.include_images) {
@@ -134,43 +163,6 @@ export default function AIConstructor() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleDownload = () => {
-    if (!result) return;
-    const el = document.getElementById('doc-print-content');
-    if (!el) return;
-    const title = result.content.title || 'documento';
-    const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>${title}</title>
-  <style>
-    @page { size: Letter; margin: 15mm 18mm; }
-    body { font-family: Arial, sans-serif; color: #111; background: white; margin: 0; padding: 24px; }
-    h1 { font-size: 18pt; font-weight: bold; text-align: center; text-transform: uppercase; }
-    h3 { font-size: 11pt; font-weight: 600; border-bottom: 1px solid #aaa; padding-bottom: 4px; margin-top: 20px; }
-    p, li { font-size: 10pt; line-height: 1.5; }
-    .meta { text-align: center; font-size: 10pt; color: #444; margin: 4px 0 12px; }
-    .student-row { display: flex; gap: 32px; border: 1px solid #ccc; padding: 8px 12px; border-radius: 4px; margin: 12px 0; font-size: 10pt; }
-    .instructions-box { background: #f9f9f9; border: 1px solid #ccc; padding: 8px 12px; border-radius: 4px; margin: 12px 0; font-size: 10pt; }
-    .question { background: #f5f5f5; border: 1px solid #ddd; padding: 8px 12px; border-radius: 4px; margin: 8px 0; }
-    .answer { color: #059669; font-size: 9pt; font-weight: 600; }
-    img { max-height: 120mm; display: block; margin: 8px auto; }
-    .section { margin-bottom: 20px; page-break-inside: avoid; }
-  </style>
-</head>
-<body>
-${el.innerHTML}
-</body>
-</html>`;
-    const win = window.open('', '_blank');
-    if (!win) { toast.error('Permite ventanas emergentes para descargar PDF'); return; }
-    win.document.write(html);
-    win.document.close();
-    win.onload = () => { win.focus(); win.print(); };
-    toast.success('Selecciona "Guardar como PDF" en el diálogo de impresión');
   };
 
   const handleExport = async (format: 'pdf' | 'docx') => {
@@ -199,11 +191,11 @@ ${el.innerHTML}
     }
   };
 
-  const handleSaveToCalendar = async () => {
-    if (!result) return;
-    setSaving(true);
+  const handleSaveDocument = async () => {
+    if (!result || savedDocumentId || savingDocument) return;
+    setSavingDocument(true);
     try {
-      await constructorAPI.saveToCalendar({
+      const res = await constructorAPI.save({
         title: result.content.title || `${DOC_TYPE_CONFIG[form.doc_type].label} - ${form.topic}`,
         doc_type: form.doc_type,
         subject: form.subject,
@@ -211,8 +203,43 @@ ${el.innerHTML}
         content: result.content,
         ai_prompt: result.prompt,
         images: result.images,
-        event_date: calendarDate,
       });
+      setSavedDocumentId(res.data?.id ?? null);
+      toast.success('Documento guardado en Mis Documentos');
+    } catch {
+      toast.error('Error al guardar el documento');
+    } finally {
+      setSavingDocument(false);
+    }
+  };
+
+  const handleSaveToCalendar = async () => {
+    if (!result) return;
+    setSaving(true);
+    try {
+      if (savedDocumentId) {
+        // El documento ya existe: solo crear el evento para no duplicarlo,
+        // preservando la misma categoría y el vínculo [doc_id:N] que usa el backend.
+        await eventsAPI.create({
+          title: result.content.title || `${DOC_TYPE_CONFIG[form.doc_type].label} - ${form.topic}`,
+          description: buildDocLinkDescription(savedDocumentId, form.subject, form.grade_level),
+          start_datetime: calendarDate,
+          all_day: true,
+          category: DOC_TYPE_EVENT_CATEGORY[form.doc_type] || 'general',
+        });
+      } else {
+        const res = await constructorAPI.saveToCalendar({
+          title: result.content.title || `${DOC_TYPE_CONFIG[form.doc_type].label} - ${form.topic}`,
+          doc_type: form.doc_type,
+          subject: form.subject,
+          grade_level: form.grade_level,
+          content: result.content,
+          ai_prompt: result.prompt,
+          images: result.images,
+          event_date: calendarDate,
+        });
+        setSavedDocumentId(res.data?.doc_id ?? null);
+      }
       setShowCalendarModal(false);
       toast.success('¡Guardado y agregado al calendario!');
     } catch {
@@ -248,11 +275,9 @@ ${el.innerHTML}
 
     const merged: Record<string, string> = {};
 
-    // Group words by style
     const photoWords = allWords.filter(w => wordStyleMap[w] !== 'coloring');
     const colorWords = allWords.filter(w => wordStyleMap[w] === 'coloring');
 
-    // Process in small batches of 3 to avoid timeouts
     const processBatch = async (words: string[], style: string) => {
       const batchSize = 3;
       for (let i = 0; i < words.length; i += batchSize) {
@@ -279,110 +304,29 @@ ${el.innerHTML}
   };
   // ─────────────────────────────────────────────────────────────────────────
 
-  const renderMarkdown = (text: string): string => {
-    return text
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>');
-  };
-
-  const getItemText = (item: any): string => {
-    return item.text || item.question || item.activity || item.description || item.content || item.title || JSON.stringify(item);
-  };
-
-  const getItemImageWords = (item: any): string[] => {
-    if (item && typeof item === 'object' && Array.isArray(item.image_words)) {
-      return item.image_words.map((w: string) => w.toLowerCase().trim()).filter((w: string) => w.length > 1);
-    }
-    return [];
-  };
-
-  const ImageGrid = ({ words }: { words: string[] }) => {
-    if (!words.length) return null;
-    return (
-      <div className="mt-3 flex flex-wrap gap-3 justify-center">
-        {words.map(word => {
-          const imgUrl = activityImages[word];
-          return (
-            <div key={word} className="text-center">
-              {imgUrl ? (
-                <img src={imgUrl} alt={word} className="w-24 h-24 object-cover rounded-lg border border-gray-200 mx-auto shadow-sm" />
-              ) : (
-                <div className="w-24 h-24 bg-gray-100 rounded-lg border border-dashed border-gray-300 flex items-center justify-center">
-                  {loadingActivityImages
-                    ? <ArrowPathIcon className="w-4 h-4 text-gray-300 animate-spin" />
-                    : <PhotoIcon className="w-6 h-6 text-gray-300" />}
-                </div>
-              )}
-              <p className="text-xs text-gray-600 mt-1 capitalize font-medium">{word}</p>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  const renderSection = (section: any, idx: number) => {
-    const content = section.content;
-    return (
-      <div key={idx} className="mb-6">
-        {section.title && <h3 className="text-base font-semibold text-gray-900 mb-2 border-b border-gray-300 pb-1">{section.title}</h3>}
-        {typeof content === 'string' && (
-          <p className="text-sm text-gray-900 whitespace-pre-line" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
-        )}
-        {Array.isArray(content) && content.map((item: any, i: number) => {
-          const imgWords = getItemImageWords(item);
-          return (
-            <div key={i} className="mb-3">
-              {typeof item === 'string' ? (
-                <p className="text-sm text-gray-900" dangerouslySetInnerHTML={{ __html: `${i + 1}. ${renderMarkdown(item)}` }} />
-              ) : (
-                <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                  <p className="text-sm font-medium text-gray-900">
-                    <span dangerouslySetInnerHTML={{ __html: `${item.number || i + 1}. ${renderMarkdown(getItemText(item))}` }} />
-                    {item.points && <span className="ml-2 text-xs text-gray-600">({item.points} pts)</span>}
-                  </p>
-                  <ImageGrid words={imgWords} />
-                  {item.options && (
-                    <ul className="mt-2 space-y-1 ml-4">
-                      {item.options.map((opt: string, j: number) => (
-                        <li key={j} className="text-sm text-gray-800">
-                          {String.fromCharCode(65 + j)}) {opt}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {item.answer && (
-                    <p className="mt-1 text-xs text-emerald-600 font-medium">✓ {item.answer}</p>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+  const providerOptions: { id: AIProvider; desc: string }[] = [
+    { id: 'auto', desc: `Usa ${providerLabel(preferredProvider)} (preferido)` },
+    { id: 'gemini', desc: 'Gemini 2.5 Flash' },
+    { id: 'xai', desc: 'Grok 3 Mini' },
+    { id: 'openai', desc: 'GPT-4o' },
+  ];
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
-      {/* Header */}
-      <div className="px-6 py-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Constructor IA</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Genera pruebas, guías, planificaciones y más con inteligencia artificial</p>
-        </div>
-        {step === 'result' && (
-          <button onClick={() => { setStep('form'); setResult(null); }}
-            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 flex items-center gap-1.5">
+      <PageHeader
+        title="Constructor IA"
+        description="Genera pruebas, guías, planificaciones y más con inteligencia artificial"
+        actions={step === 'result' && (
+          <Button variant="ghost" onClick={() => { setStep('form'); setResult(null); setSavedDocumentId(null); }}>
             <ArrowPathIcon className="w-4 h-4" /> Nueva generación
-          </button>
+          </Button>
         )}
-      </div>
+      />
 
-      <div className="flex-1 overflow-auto p-6">
+      <div ref={scrollRef} className="flex-1 overflow-auto p-4 sm:p-6">
         {step === 'form' ? (
           <div className="max-w-2xl mx-auto">
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 space-y-5">
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-4 sm:p-6 space-y-5">
               <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
                 <SparklesIcon className="w-5 h-5 text-primary-600" />
                 Configura tu documento
@@ -391,12 +335,14 @@ ${el.innerHTML}
               {/* Doc type */}
               <div>
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-2">Tipo de documento</label>
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                   {(Object.keys(DOC_TYPE_CONFIG) as DocType[]).map(type => (
                     <button
                       key={type}
+                      type="button"
                       onClick={() => setForm(f => ({ ...f, doc_type: type }))}
-                      className={`p-3 rounded-xl border-2 text-center transition-all ${
+                      aria-pressed={form.doc_type === type}
+                      className={`p-3 rounded-xl border-2 text-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
                         form.doc_type === type
                           ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30'
                           : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
@@ -410,18 +356,16 @@ ${el.innerHTML}
               </div>
 
               {/* Subject & Grade */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Asignatura</label>
-                  <select value={form.subject} onChange={set('subject')}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+                  <label htmlFor="ac-subject" className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Asignatura</label>
+                  <select id="ac-subject" value={form.subject} onChange={set('subject')} className={selectClass}>
                     {SUBJECTS.map(s => <option key={s}>{s}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Nivel</label>
-                  <select value={form.grade_level} onChange={set('grade_level')}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+                  <label htmlFor="ac-grade" className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Nivel</label>
+                  <select id="ac-grade" value={form.grade_level} onChange={set('grade_level')} className={selectClass}>
                     {GRADE_LEVELS.map(g => <option key={g}>{g}</option>)}
                   </select>
                 </div>
@@ -429,27 +373,26 @@ ${el.innerHTML}
 
               {/* Topic */}
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Tema principal *</label>
+                <label htmlFor="ac-topic" className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Tema principal *</label>
                 <input
+                  id="ac-topic"
                   value={form.topic}
                   onChange={set('topic')}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  className={selectClass}
                   placeholder="Ej: Fracciones, La célula, Segunda Guerra Mundial..."
                 />
               </div>
 
               {/* Num questions & Difficulty */}
               {['prueba', 'evaluacion', 'guia'].includes(form.doc_type) && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">N° de preguntas</label>
-                    <input type="number" min={1} max={30} value={form.num_questions} onChange={set('num_questions')}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" />
+                    <label htmlFor="ac-num-questions" className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">N° de preguntas</label>
+                    <input id="ac-num-questions" type="number" min={1} max={30} value={form.num_questions} onChange={set('num_questions')} className={selectClass} />
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Dificultad</label>
-                    <select value={form.difficulty} onChange={set('difficulty')}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+                    <label htmlFor="ac-difficulty" className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Dificultad</label>
+                    <select id="ac-difficulty" value={form.difficulty} onChange={set('difficulty')} className={selectClass}>
                       <option value="fácil">Fácil</option>
                       <option value="medio">Medio</option>
                       <option value="difícil">Difícil</option>
@@ -460,13 +403,14 @@ ${el.innerHTML}
 
               {/* Instructions */}
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Instrucciones adicionales (opcional)</label>
+                <div className="flex items-center justify-between mb-1 gap-2">
+                  <label htmlFor="ac-instructions" className="text-sm font-medium text-gray-700 dark:text-gray-300">Instrucciones adicionales (opcional)</label>
                   <button
                     type="button"
                     onClick={handleOptimizeInstructions}
                     disabled={optimizing || !form.instructions.trim()}
-                    className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all font-medium"
+                    aria-busy={optimizing}
+                    className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 shrink-0"
                     title="Optimiza tu texto para obtener mejores resultados con la IA"
                   >
                     {optimizing
@@ -475,10 +419,11 @@ ${el.innerHTML}
                   </button>
                 </div>
                 <textarea
+                  id="ac-instructions"
                   value={form.instructions}
                   onChange={set('instructions')}
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none resize-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  className={`${selectClass} resize-none`}
                   placeholder="Ej: Incluir contextualización, énfasis en pensamiento crítico, formato específico..."
                 />
                 <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Escribe en lenguaje simple y el botón ✨ lo convertirá en un prompt técnico optimizado.</p>
@@ -487,23 +432,21 @@ ${el.innerHTML}
               {/* Provider selector */}
               <div>
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-2">Proveedor de IA</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'auto', label: 'Auto', desc: `Usa ${preferredProvider === 'gemini' ? 'Google Gemini' : 'OpenAI'} (preferido)`, emoji: '⚡' },
-                    { id: 'gemini', label: 'Google Gemini', desc: 'Gratis · Gemini 3 Flash', emoji: '🌐' },
-                    { id: 'openai', label: 'OpenAI', desc: 'GPT-4o · Mayor calidad', emoji: '🤖' },
-                  ].map(p => (
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  {providerOptions.map(p => (
                     <button
                       key={p.id}
-                      onClick={() => setForm(f => ({ ...f, provider: p.id as any }))}
-                      className={`p-3 rounded-xl border-2 text-left transition-all ${
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, provider: p.id }))}
+                      aria-pressed={form.provider === p.id}
+                      className={`p-3 rounded-xl border-2 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
                         form.provider === p.id
                           ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30'
                           : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
                       }`}
                     >
-                      <span className="text-lg">{p.emoji}</span>
-                      <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-1">{p.label}</p>
+                      <span className="text-lg">{PROVIDERS[p.id].emoji}</span>
+                      <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-1">{PROVIDERS[p.id].label}</p>
                       <p className="text-xs text-gray-500 dark:text-gray-400">{p.desc}</p>
                     </button>
                   ))}
@@ -512,22 +455,22 @@ ${el.innerHTML}
 
               {/* Options */}
               <div className="flex flex-wrap gap-4">
-                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                  <input type="checkbox" checked={form.include_answers} onChange={set('include_answers')} className="rounded" />
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input type="checkbox" checked={form.include_answers} onChange={set('include_answers')} className="w-4 h-4 rounded" />
                   Incluir pauta / respuestas
                 </label>
-                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                  <input type="checkbox" checked={form.include_images} onChange={set('include_images')} className="rounded" />
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input type="checkbox" checked={form.include_images} onChange={set('include_images')} className="w-4 h-4 rounded" />
                   <PhotoIcon className="w-4 h-4 text-gray-500" />
                   Generar imagen ilustrativa
                 </label>
               </div>
 
               {/* Generate button */}
-              <button
+              <Button
                 onClick={handleGenerate}
-                disabled={loading}
-                className="w-full py-3 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+                busy={loading}
+                className="w-full py-3 text-base font-semibold"
               >
                 {loading ? (
                   <>
@@ -540,31 +483,12 @@ ${el.innerHTML}
                     Generar {DOC_TYPE_CONFIG[form.doc_type].label}
                   </>
                 )}
-              </button>
+              </Button>
 
               {loading && (
-                <div className="text-center -mt-3 space-y-2">
-                  {imageProgress.total > 0 ? (
-                    <>
-                      <p className="text-sm font-medium text-primary-700 dark:text-primary-400">
-                        Generando ilustraciones: {imageProgress.current} de {imageProgress.total}
-                      </p>
-                      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 overflow-hidden">
-                        <div
-                          className="bg-primary-600 h-2.5 rounded-full transition-all duration-500"
-                          style={{ width: `${Math.round((imageProgress.current / imageProgress.total) * 100)}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-400">
-                        Cada imagen se genera con IA para máxima calidad...
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-xs text-gray-500">
-                      Generando contenido del documento...
-                    </p>
-                  )}
-                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 text-center -mt-3">
+                  Generando contenido del documento...
+                </p>
               )}
             </div>
           </div>
@@ -572,168 +496,134 @@ ${el.innerHTML}
           result && (
             <div className="max-w-3xl mx-auto">
               {/* Actions bar */}
-              <div className="flex items-center justify-between mb-4 no-print">
+              <div className="flex flex-col gap-3 mb-4 no-print">
                 <div>
-                  <h3 className="font-semibold text-gray-900">{result.content.title}</h3>
+                  <h3 className="font-semibold text-gray-900 dark:text-white">{result.content.title}</h3>
                   {result.provider_used && (
                     <span className="text-xs text-gray-400 dark:text-gray-500">
-                      Generado con {result.provider_used === 'gemini' ? '🌐 Google Gemini' : '🤖 OpenAI'}
+                      Generado con {providerEmoji(result.provider_used)} {providerLabel(result.provider_used)}
                     </span>
                   )}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => setShowDownloadModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                    <ArrowDownTrayIcon className="w-4 h-4" />
-                    Descargar
-                  </button>
-                  <button onClick={handlePrint}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm bg-gray-700 text-white rounded-lg hover:bg-gray-800">
-                    <DocumentArrowDownIcon className="w-4 h-4" />
-                    Imprimir / PDF
-                  </button>
-                  <button onClick={() => setShowCalendarModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
-                    <CalendarDaysIcon className="w-4 h-4" />
-                    Cargar en Calendario
-                  </button>
-                </div>
-              </div>
-
-              {/* Download modal */}
-              {showDownloadModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 no-print">
-                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 w-full max-w-sm mx-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                        <ArrowDownTrayIcon className="w-5 h-5 text-blue-600" />
-                        Descargar documento
-                      </h3>
-                      <button onClick={() => setShowDownloadModal(false)} className="text-gray-400 hover:text-gray-600">
-                        <XMarkIcon className="w-5 h-5" />
-                      </button>
-                    </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">Selecciona el formato de descarga:</p>
-                    <div className="flex flex-col gap-3">
-                      <button onClick={() => handleExport('pdf')} disabled={exporting}
-                        className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-red-200 dark:border-red-800 hover:border-red-400 dark:hover:border-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60 transition-colors">
-                        <span className="text-2xl">📄</span>
-                        <div className="text-left">
-                          <p className="font-semibold text-gray-900 dark:text-white text-sm">PDF</p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">Ideal para imprimir o compartir</p>
-                        </div>
-                      </button>
-                      <button onClick={() => handleExport('docx')} disabled={exporting}
-                        className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-blue-200 dark:border-blue-800 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-60 transition-colors">
-                        <span className="text-2xl">📝</span>
-                        <div className="text-left">
-                          <p className="font-semibold text-gray-900 dark:text-white text-sm">Word (.docx)</p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">Para editar en Word o Google Docs</p>
-                        </div>
-                      </button>
-                    </div>
-                    {exporting && (
-                      <p className="text-center text-xs text-gray-400 mt-3 flex items-center justify-center gap-1">
-                        <ArrowPathIcon className="w-3 h-3 animate-spin" /> Generando archivo...
+                  {loadingActivityImages && imageProgress.total > 0 && (
+                    <div className="mt-2 max-w-xs">
+                      <p className="text-xs font-medium text-primary-700 dark:text-primary-400">
+                        Generando ilustraciones: {imageProgress.current} de {imageProgress.total}
                       </p>
-                    )}
-                    <button onClick={() => setShowDownloadModal(false)}
-                      className="mt-4 w-full px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300">
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Calendar modal */}
-              {showCalendarModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 no-print">
-                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 w-full max-w-sm mx-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                        <CalendarDaysIcon className="w-5 h-5 text-emerald-600" />
-                        Cargar en Calendario
-                      </h3>
-                      <button onClick={() => setShowCalendarModal(false)} className="text-gray-400 hover:text-gray-600">
-                        <XMarkIcon className="w-5 h-5" />
-                      </button>
-                    </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                      Selecciona el día en que usarás este documento. Se guardará en el VPS y aparecerá en tu calendario.
-                    </p>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Fecha</label>
-                    <input
-                      type="date"
-                      value={calendarDate}
-                      onChange={e => setCalendarDate(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm mb-4 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                    />
-                    <div className="flex gap-2">
-                      <button onClick={() => setShowCalendarModal(false)}
-                        className="flex-1 px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300">
-                        Cancelar
-                      </button>
-                      <button onClick={handleSaveToCalendar} disabled={saving}
-                        className="flex-1 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60 font-medium">
-                        {saving ? 'Guardando...' : 'Confirmar'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Document preview */}
-              <div id="doc-print-content" className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 print-content">
-                {/* Header */}
-                <div className="text-center mb-6 pb-4 border-b-2 border-gray-900">
-                  <h1 className="text-xl font-bold text-gray-900 uppercase">{result.content.title}</h1>
-                  {result.content.metadata && (
-                    <div className="flex justify-center gap-6 mt-2 text-sm text-gray-700 font-medium">
-                      <span><strong>Asignatura:</strong> {result.content.metadata.subject}</span>
-                      <span><strong>Nivel:</strong> {result.content.metadata.grade}</span>
-                      {result.content.metadata.total_points && (
-                        <span><strong>Puntaje:</strong> {result.content.metadata.total_points} pts</span>
-                      )}
+                      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 overflow-hidden mt-1">
+                        <div
+                          className="bg-primary-600 h-1.5 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.round((imageProgress.current / imageProgress.total) * 100)}%` }}
+                        />
+                      </div>
                     </div>
                   )}
-                  <div className="grid grid-cols-3 gap-4 mt-4 text-left border border-gray-300 rounded p-3">
-                    <div className="text-sm"><strong>Nombre:</strong> _________________</div>
-                    <div className="text-sm"><strong>Curso:</strong> _______________</div>
-                    <div className="text-sm"><strong>Fecha:</strong> _______________</div>
-                  </div>
                 </div>
-
-                {/* AI Image */}
-                {imageLoading && (
-                  <div className="mb-4 flex justify-center items-center gap-2 text-sm text-gray-400">
-                    <ArrowPathIcon className="w-4 h-4 animate-spin" />
-                    Generando ilustración...
-                  </div>
-                )}
-                {!imageLoading && imageUrl && (
-                  <div className="mb-4 flex justify-center">
-                    <img
-                      src={imageUrl}
-                      alt="Ilustración generada por IA"
-                      className="max-h-48 rounded-lg border border-gray-200"
-                      onError={(e) => {
-                        // If the image fails to load, hide it gracefully
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  </div>
-                )}
-
-                {/* Instructions */}
-                {result.content.instructions && (
-                  <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                    <p className="text-sm text-gray-900"><strong>Instrucciones:</strong> {result.content.instructions}</p>
-                  </div>
-                )}
-
-                {/* Sections */}
-                {result.content.sections?.map((section: any, idx: number) => renderSection(section, idx))}
+                <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={handleSaveDocument}
+                    busy={savingDocument}
+                    disabled={!!savedDocumentId}
+                  >
+                    {savedDocumentId ? <CheckCircleIcon className="w-4 h-4 text-emerald-600" /> : <BookmarkIcon className="w-4 h-4" />}
+                    {savedDocumentId ? 'Guardado' : 'Guardar documento'}
+                  </Button>
+                  <Button onClick={() => setShowDownloadModal(true)} className="bg-blue-600 hover:bg-blue-700">
+                    <ArrowDownTrayIcon className="w-4 h-4" />
+                    Descargar
+                  </Button>
+                  <Button variant="secondary" onClick={handlePrint}>
+                    <DocumentArrowDownIcon className="w-4 h-4" />
+                    Imprimir / PDF
+                  </Button>
+                  <Button onClick={() => setShowCalendarModal(true)} className="bg-emerald-600 hover:bg-emerald-700">
+                    <CalendarDaysIcon className="w-4 h-4" />
+                    Cargar en Calendario
+                  </Button>
+                </div>
               </div>
+
+              <AppDialog
+                open={showDownloadModal}
+                onClose={() => setShowDownloadModal(false)}
+                title="Descargar documento"
+                description="Selecciona el formato de descarga"
+                maxWidth="sm"
+                footer={
+                  <Button variant="secondary" className="w-full" onClick={() => setShowDownloadModal(false)}>
+                    Cancelar
+                  </Button>
+                }
+              >
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => handleExport('pdf')}
+                    disabled={exporting}
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-red-200 dark:border-red-800 hover:border-red-400 dark:hover:border-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 min-h-[44px]"
+                  >
+                    <span className="text-2xl">📄</span>
+                    <div className="text-left">
+                      <p className="font-semibold text-gray-900 dark:text-white text-sm">PDF</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Ideal para imprimir o compartir</p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => handleExport('docx')}
+                    disabled={exporting}
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-blue-200 dark:border-blue-800 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 min-h-[44px]"
+                  >
+                    <span className="text-2xl">📝</span>
+                    <div className="text-left">
+                      <p className="font-semibold text-gray-900 dark:text-white text-sm">Word (.docx)</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Para editar en Word o Google Docs</p>
+                    </div>
+                  </button>
+                </div>
+                {exporting && (
+                  <p className="text-center text-xs text-gray-400 mt-3 flex items-center justify-center gap-1" role="status" aria-live="polite">
+                    <ArrowPathIcon className="w-3 h-3 animate-spin" /> Generando archivo...
+                  </p>
+                )}
+              </AppDialog>
+
+              <AppDialog
+                open={showCalendarModal}
+                onClose={() => setShowCalendarModal(false)}
+                title="Cargar en Calendario"
+                maxWidth="sm"
+                footer={
+                  <div className="flex gap-2">
+                    <Button variant="secondary" className="flex-1" onClick={() => setShowCalendarModal(false)}>
+                      Cancelar
+                    </Button>
+                    <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveToCalendar} busy={saving}>
+                      {saving ? 'Guardando...' : 'Confirmar'}
+                    </Button>
+                  </div>
+                }
+              >
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  Selecciona el día en que usarás este documento. Se guardará en el VPS y aparecerá en tu calendario.
+                </p>
+                <label htmlFor="ac-calendar-date" className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Fecha</label>
+                <input
+                  id="ac-calendar-date"
+                  type="date"
+                  value={calendarDate}
+                  onChange={e => setCalendarDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                />
+              </AppDialog>
+
+              <DocumentPreview
+                id="doc-print-content"
+                content={result.content}
+                imageUrl={imageUrl}
+                imageLoading={imageLoading}
+                activityImages={activityImages}
+                activityImagesLoading={loadingActivityImages}
+                showStudentRow
+              />
             </div>
           )
         )}
