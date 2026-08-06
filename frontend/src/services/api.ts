@@ -46,26 +46,34 @@ export const eventsAPI = {
 
 // AI Constructor
 export const constructorAPI = {
-  generate: (data: object) => api.post('/constructor/generate', data),
-  optimizeInstructions: (data: object) => api.post('/constructor/optimize-instructions', data),
+  // nginx corta a 300 s; sin timeout propio, axios esperaba indefinidamente
+  // y el spinner quedaba girando para siempre si algo se colgaba.
+  generate: (data: object) => api.post('/constructor/generate', data, { timeout: 180000 }),
+  optimizeInstructions: (data: object) => api.post('/constructor/optimize-instructions', data, { timeout: 60000 }),
   save: (data: object) => api.post('/constructor/save', data),
   saveToCalendar: (data: object) => api.post('/constructor/save-to-calendar', data),
-  generateImage: (data: object) => api.post('/constructor/generate-image', data),
-  searchImages: (data: object) => api.post('/constructor/search-images', data, { timeout: 90000 }),
+  generateImage: (data: object) => api.post('/constructor/generate-image', data, { timeout: 120000 }),
+  searchImages: (data: object) => api.post('/constructor/search-images', data, { timeout: 180000 }),
   exportPdf: (data: object) => api.post('/constructor/export-pdf', data, { responseType: 'blob' }),
   exportDocx: (data: object) => api.post('/constructor/export-docx', data, { responseType: 'blob' }),
   getDocuments: (doc_type?: string) => api.get('/constructor/documents', { params: { doc_type } }),
   getDocument: (id: number) => api.get(`/constructor/documents/${id}`),
   deleteDocument: (id: number) => api.delete(`/constructor/documents/${id}`),
-  improve: (content: string, instruction: string) =>
-    api.post('/constructor/improve', { content, instruction }),
+};
+
+// Currículum MINEDUC
+export const curriculumAPI = {
+  getLevels: () => api.get('/curriculum/levels'),
+  getOA: (grade_level: string, subject: string) =>
+    api.get('/curriculum/oa', { params: { grade_level, subject } }),
 };
 
 // Settings
 export const settingsAPI = {
   get: () => api.get('/settings/'),
   update: (data: object) => api.put('/settings/', data),
-  deleteKey: (provider: 'openai' | 'google' | 'xai' | 'all') =>
+  health: () => api.get('/settings/health', { timeout: 30000 }),
+  deleteKey: (provider: 'openrouter' | 'openai' | 'google' | 'xai' | 'all') =>
     api.delete(`/settings/keys?provider=${provider}`),
 };
 

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { constructorAPI, settingsAPI, eventsAPI } from '../services/api';
-import type { DocType, DocumentContent, EventCategory } from '../types';
+import { constructorAPI, curriculumAPI, settingsAPI, eventsAPI } from '../services/api';
+import type { CurriculumOA, DocType, DocumentContent, EventCategory } from '../types';
 import { DOC_TYPE_CONFIG, SUBJECTS, GRADE_LEVELS } from '../types';
-import { PROVIDERS, providerLabel, providerEmoji } from '../config/providers';
+import { PROVIDERS, providerLabel, providerEmoji, selectableProviders } from '../config/providers';
 import type { AIProvider } from '../config/providers';
 import toast from 'react-hot-toast';
 import {
@@ -32,19 +32,21 @@ interface GenerateForm {
   difficulty: string;
   include_images: boolean;
   include_answers: boolean;
+  oa_codes: string[];
   provider: AIProvider;
 }
 
 const defaultForm: GenerateForm = {
   doc_type: 'prueba',
   subject: 'Matemática',
-  grade_level: '5° Básico',
+  grade_level: '1° Básico',
   topic: '',
   instructions: '',
   num_questions: 10,
   difficulty: 'medio',
   include_images: false,
   include_answers: true,
+  oa_codes: [],
   provider: 'auto',
 };
 
@@ -65,6 +67,28 @@ const DOC_TYPE_EVENT_CATEGORY: Record<DocType, EventCategory> = {
 const buildDocLinkDescription = (docId: number, subject?: string, gradeLevel?: string) =>
   `[doc_id:${docId}] ${subject || ''} - ${gradeLevel || ''}`.replace(/^[ -]+|[ -]+$/g, '');
 
+/**
+ * Recolecta {palabra: estilo} de todas las secciones, deduplicando.
+ *
+ * Espeja `collect_image_words` del backend. Acepta `items` (esquema nuevo) y
+ * `content` como lista (documentos anteriores al esquema validado).
+ */
+const collectImageWords = (sections: any[] | undefined): Record<string, string> => {
+  const map: Record<string, string> = {};
+  (sections || []).forEach(sec => {
+    const items = Array.isArray(sec?.items) ? sec.items : Array.isArray(sec?.content) ? sec.content : [];
+    items.forEach((item: any) => {
+      if (!item || typeof item !== 'object' || !Array.isArray(item.image_words)) return;
+      const style = item.image_style && item.image_style !== 'none' ? item.image_style : 'photo';
+      item.image_words.forEach((w: string) => {
+        const key = String(w).toLowerCase().trim();
+        if (key.length > 1 && !(key in map)) map[key] = style;
+      });
+    });
+  });
+  return map;
+};
+
 export default function AIConstructor() {
   const [form, setForm] = useState<GenerateForm>(defaultForm);
   const [step, setStep] = useState<Step>('form');
@@ -84,11 +108,41 @@ export default function AIConstructor() {
   const [imageProgress, setImageProgress] = useState({ current: 0, total: 0 });
   const [savedDocumentId, setSavedDocumentId] = useState<number | null>(null);
   const [savingDocument, setSavingDocument] = useState(false);
+  const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
+  const [oaList, setOaList] = useState<CurriculumOA[]>([]);
+  const [loadingOa, setLoadingOa] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    settingsAPI.get().then(r => setPreferredProvider(r.data.preferred_provider || 'gemini')).catch(() => {});
+    settingsAPI.get()
+      .then(r => {
+        setSettings(r.data);
+        setPreferredProvider(r.data.preferred_provider || 'openrouter');
+      })
+      .catch(() => {});
   }, []);
+
+  // Los OA disponibles dependen del par nivel + asignatura. Si ese par no tiene
+  // currículum cargado el selector no aparece y la generación sigue igual.
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingOa(true);
+    curriculumAPI.getOA(form.grade_level, form.subject)
+      .then(r => { if (!cancelled) setOaList(r.data.oa || []); })
+      .catch(() => { if (!cancelled) setOaList([]); })
+      .finally(() => { if (!cancelled) setLoadingOa(false); });
+    // Cambiar de nivel o asignatura invalida los OA marcados: pertenecen al par anterior.
+    setForm(f => (f.oa_codes.length ? { ...f, oa_codes: [] } : f));
+    return () => { cancelled = true; };
+  }, [form.grade_level, form.subject]);
+
+  const toggleOa = (code: string) =>
+    setForm(f => ({
+      ...f,
+      oa_codes: f.oa_codes.includes(code)
+        ? f.oa_codes.filter(c => c !== code)
+        : [...f.oa_codes, code],
+    }));
 
   // Vuelve al inicio del panel scrolleable tanto al mostrar el resultado como al volver al formulario.
   useEffect(() => {
@@ -136,12 +190,7 @@ export default function AIConstructor() {
       setStep('result');
       toast.success('¡Documento generado!');
 
-      const hasImages = res.data.content?.sections?.some((s: any) =>
-        Array.isArray(s.content) && s.content.some((item: any) =>
-          item && typeof item === 'object' && Array.isArray(item.image_words) && item.image_words.length > 0
-        )
-      );
-      if (hasImages) {
+      if (Object.keys(collectImageWords(res.data.content?.sections)).length > 0) {
         loadActivityImages(res.data.content.sections);
       }
 
@@ -251,22 +300,9 @@ export default function AIConstructor() {
 
   const handlePrint = () => window.print();
 
-  // ── Activity image fetching (backend search-images with Wikimedia + Pixabay + Wikipedia) ──
+  // ── Ilustraciones de las actividades (backend → OpenRouter, con caché) ──
   const loadActivityImages = async (sections: any[]) => {
-    const wordStyleMap: Record<string, string> = {};
-    sections.forEach(sec => {
-      const items = sec.content;
-      if (!Array.isArray(items)) return;
-      items.forEach((item: any) => {
-        if (item && typeof item === 'object' && Array.isArray(item.image_words)) {
-          const style = item.image_style || 'photo';
-          item.image_words.forEach((w: string) => {
-            const key = w.toLowerCase().trim();
-            if (key.length > 1) wordStyleMap[key] = style;
-          });
-        }
-      });
-    });
+    const wordStyleMap = collectImageWords(sections);
 
     const allWords = Object.keys(wordStyleMap);
     if (!allWords.length) return;
@@ -304,12 +340,17 @@ export default function AIConstructor() {
   };
   // ─────────────────────────────────────────────────────────────────────────
 
-  const providerOptions: { id: AIProvider; desc: string }[] = [
-    { id: 'auto', desc: `Usa ${providerLabel(preferredProvider)} (preferido)` },
-    { id: 'gemini', desc: 'Gemini 2.5 Flash' },
-    { id: 'xai', desc: 'Grok 3 Mini' },
-    { id: 'openai', desc: 'GPT-4o' },
-  ];
+  // Los modelos concretos salen de Configuración, así que aquí no se
+  // hardcodean nombres: antes decía "Gemini 3 Flash" mientras el modelo real
+  // era otro, y un documento generado con Grok se anunciaba como "OpenAI".
+  const providerOptions = selectableProviders(settings).map(id => ({
+    id,
+    desc: id === 'auto'
+      ? `Usa ${providerLabel(preferredProvider)}`
+      : id === 'openrouter'
+        ? String(settings?.text_model || 'Modelo configurado')
+        : 'Con tu propia API Key',
+  }));
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
@@ -383,6 +424,58 @@ export default function AIConstructor() {
                 />
               </div>
 
+              {/* Objetivos de Aprendizaje MINEDUC */}
+              {oaList.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2 gap-2">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Objetivos de Aprendizaje (MINEDUC)
+                    </label>
+                    {form.oa_codes.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setForm(f => ({ ...f, oa_codes: [] }))}
+                        className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+                      >
+                        Quitar selección ({form.oa_codes.length})
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-56 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-600 divide-y divide-gray-100 dark:divide-gray-700">
+                    {oaList.map(oa => {
+                      const checked = form.oa_codes.includes(oa.code);
+                      return (
+                        <label
+                          key={oa.code}
+                          className={`flex gap-3 p-3 cursor-pointer transition-colors ${
+                            checked ? 'bg-primary-50 dark:bg-primary-900/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleOa(oa.code)}
+                            className="w-4 h-4 rounded mt-0.5 shrink-0"
+                          />
+                          <span className="text-xs">
+                            <span className="font-semibold text-primary-700 dark:text-primary-400">{oa.code}</span>
+                            <span className="text-gray-600 dark:text-gray-400"> — {oa.description}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                    Sin selección, la IA se guía por todos los OA del nivel. Marcar OA específicos enfoca el documento.
+                  </p>
+                </div>
+              )}
+              {loadingOa && oaList.length === 0 && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
+                  <ArrowPathIcon className="w-3 h-3 animate-spin" /> Buscando objetivos del currículum...
+                </p>
+              )}
+
               {/* Num questions & Difficulty */}
               {['prueba', 'evaluacion', 'guia'].includes(form.doc_type) && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -430,6 +523,14 @@ export default function AIConstructor() {
               </div>
 
               {/* Provider selector */}
+              {providerOptions.length === 0 ? (
+                <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3">
+                  <p className="text-sm text-amber-800 dark:text-amber-200">
+                    No hay ninguna API Key configurada. Ve a <strong>Configuración</strong> y agrega tu clave de
+                    OpenRouter para poder generar documentos.
+                  </p>
+                </div>
+              ) : (
               <div>
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-2">Proveedor de IA</label>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
@@ -447,11 +548,12 @@ export default function AIConstructor() {
                     >
                       <span className="text-lg">{PROVIDERS[p.id].emoji}</span>
                       <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-1">{PROVIDERS[p.id].label}</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">{p.desc}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{p.desc}</p>
                     </button>
                   ))}
                 </div>
               </div>
+              )}
 
               {/* Options */}
               <div className="flex flex-wrap gap-4">

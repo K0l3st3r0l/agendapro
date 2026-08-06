@@ -7,7 +7,17 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 import os
 
-SECRET_KEY = os.getenv("SECRET_KEY", "agendapro-super-secret-key-change-in-prod")
+# os.getenv(name, default) devuelve el default solo si la variable NO existe.
+# Con SECRET_KEY="" en el .env devolvía "", y python-jose firma y valida
+# tokens con clave vacía sin error: cualquiera podía forjar un JWT para
+# cualquier user_id. Por eso se valida al importar y se cae de entrada.
+SECRET_KEY = os.getenv("SECRET_KEY") or ""
+if len(SECRET_KEY) < 32:
+    raise RuntimeError(
+        "SECRET_KEY ausente o demasiado corta (mínimo 32 caracteres). "
+        "Genera una con: python3 -c 'import secrets; print(secrets.token_urlsafe(48))' "
+        "y ponla en el .env antes de arrancar."
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 

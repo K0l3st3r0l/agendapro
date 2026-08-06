@@ -14,4 +14,7 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# --reload es una bandera de desarrollo: levanta un watcher de archivos, gasta
+# más memoria y mantiene un solo proceso. Con 1 worker, una generación de
+# documento (10-60 s) dejaba al servidor sin atender ningún otro request.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

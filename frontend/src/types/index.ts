@@ -32,19 +32,30 @@ export interface EventFormData {
 // Document/Constructor types
 export type DocType = 'prueba' | 'evaluacion' | 'guia' | 'planificacion' | 'ficha';
 
+export interface ContentItem {
+  number: number;
+  type: 'multiple_choice' | 'true_false' | 'open' | 'matching' | 'activity';
+  text: string;
+  options: string[];
+  answer: string;
+  points: number;
+  image_words: string[];
+  image_style: 'none' | 'photo' | 'coloring';
+}
+
 export interface ContentSection {
   type: 'header' | 'text' | 'questions' | 'activities' | 'answers';
   title?: string;
-  content: string | string[] | Question[];
-}
-
-export interface Question {
-  number: number;
-  type: 'multiple_choice' | 'true_false' | 'open' | 'matching';
-  text: string;
-  options?: string[];
-  answer?: string;
-  points?: number;
+  /** Texto corrido de la sección. */
+  body?: string;
+  /** Preguntas o actividades. */
+  items?: ContentItem[];
+  /**
+   * Formato antiguo, anterior al esquema validado: un único campo polimórfico.
+   * El backend normaliza al leer, pero el preview lo tolera por si llega
+   * un documento sin pasar por ahí.
+   */
+  content?: string | string[] | Record<string, unknown>[];
 }
 
 export interface DocumentContent {
@@ -56,7 +67,13 @@ export interface DocumentContent {
     grade: string;
     topic: string;
     total_points?: number;
+    oa_codes?: string[];
   };
+}
+
+export interface CurriculumOA {
+  code: string;
+  description: string;
 }
 
 export interface Document {

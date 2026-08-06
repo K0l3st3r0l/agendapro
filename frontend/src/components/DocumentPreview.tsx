@@ -75,47 +75,60 @@ interface SectionProps {
   activityImagesLoading?: boolean;
 }
 
+/**
+ * Aplana una sección al par (texto, ítems) que se renderiza.
+ *
+ * El esquema nuevo trae `body` e `items` separados. Los documentos anteriores
+ * traen un único `content` que puede ser un string o una lista, así que aquí
+ * se acepta cualquiera de las dos formas.
+ */
+function readSection(section: any): { body: string; items: any[] } {
+  if (Array.isArray(section.items) || typeof section.body === 'string') {
+    return { body: section.body || '', items: section.items || [] };
+  }
+  const legacy = section.content;
+  if (Array.isArray(legacy)) return { body: '', items: legacy };
+  return { body: typeof legacy === 'string' ? legacy : '', items: [] };
+}
+
 function Section({ section, activityImages, activityImagesLoading }: SectionProps) {
-  const content = section.content;
+  const { body, items } = readSection(section);
   return (
     <div className="mb-6">
       {section.title && (
         <h3 className="text-base font-semibold text-gray-900 mb-2 border-b border-gray-300 pb-1">{section.title}</h3>
       )}
-      {typeof content === 'string' && (
-        <p className="text-sm text-gray-900 whitespace-pre-line">{renderInline(content)}</p>
-      )}
-      {Array.isArray(content) &&
-        content.map((item: any, i: number) => {
-          const imgWords = getItemImageWords(item);
-          return (
-            <div key={i} className="mb-3">
-              {typeof item === 'string' ? (
-                <p className="text-sm text-gray-900">
-                  {i + 1}. {renderInline(item)}
+      {body && <p className="text-sm text-gray-900 whitespace-pre-line mb-3">{renderInline(body)}</p>}
+      {items.map((item: any, i: number) => {
+        const imgWords = getItemImageWords(item);
+        return (
+          <div key={i} className="mb-3">
+            {typeof item === 'string' ? (
+              <p className="text-sm text-gray-900">
+                {i + 1}. {renderInline(item)}
+              </p>
+            ) : (
+              <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-sm font-medium text-gray-900">
+                  {item.number || i + 1}. {renderInline(getItemText(item))}
+                  {item.points > 0 && <span className="ml-2 text-xs text-gray-600">({item.points} pts)</span>}
                 </p>
-              ) : (
-                <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                  <p className="text-sm font-medium text-gray-900">
-                    {item.number || i + 1}. {renderInline(getItemText(item))}
-                    {item.points && <span className="ml-2 text-xs text-gray-600">({item.points} pts)</span>}
-                  </p>
-                  <ImageGrid words={imgWords} activityImages={activityImages} loading={activityImagesLoading} />
-                  {item.options && (
-                    <ul className="mt-2 space-y-1 ml-4">
-                      {item.options.map((opt: string, j: number) => (
-                        <li key={j} className="text-sm text-gray-800">
-                          {String.fromCharCode(65 + j)}) {opt}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {item.answer && <p className="mt-1 text-xs text-emerald-600 font-medium">✓ {item.answer}</p>}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                <ImageGrid words={imgWords} activityImages={activityImages} loading={activityImagesLoading} />
+                {item.options?.length > 0 && (
+                  <ul className="mt-2 space-y-1 ml-4">
+                    {item.options.map((opt: string, j: number) => (
+                      <li key={j} className="text-sm text-gray-800">
+                        {String.fromCharCode(65 + j)}) {opt}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {item.answer && <p className="mt-1 text-xs text-emerald-600 font-medium">✓ {item.answer}</p>}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
