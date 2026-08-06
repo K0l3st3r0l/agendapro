@@ -4,7 +4,7 @@
     2. ARASAAC              — costo cero, ~0,3 s, pictogramas educativos
     3. IA, en cascada       — para lo que ARASAAC no cubre:
        a) Codex (puente)       — $0 en dólares, ~35 s, cuota del plan ChatGPT
-       b) Qwen Image 3 Pro     — ~$0,04/img, ~45 s, si el puente falla o no está
+       b) FLUX.2 Pro           — ~$0,03/img, ~10 s, si el puente falla o no está
        c) OpenRouter (default) — ~$0,0115/img, ~22 s, red de seguridad final
 
 **ARASAAC va primero a propósito.** Es el set de pictogramas del Gobierno de
@@ -46,14 +46,17 @@ de aula (uso educativo no comercial) citando la fuente, que es lo que hacen los
 exportadores. Si AgendaPro pasa a ser un producto pago hay que revisar esto:
 la cláusula NC no lo permitiría y habría que caer a la IA o licenciar otro set.
 
-Qwen Image 3 Pro se agregó el 2026-08-06 como respaldo intermedio del puente,
-no como reemplazo del fallback final: cubre las caídas de Codex (offline, sin
-cuota) sin gastar el modelo ya benchmarkeado arriba como red de seguridad. Se
-pide a 1024x1024 porque a su tamaño por defecto, 2048x2048, el costo real
-medido casi se duplica ($0,075 vs $0,04) sin ganancia para una tarjeta de
-vocabulario chica. Comparado lado a lado con el puente en la misma palabra,
-tiende a elegir paletas poco fieles al objeto real (araña azul, cuerpo
-morado); por eso queda después del puente y no lo reemplaza. Detalle en
+La capa 3b se agregó el 2026-08-06 como respaldo intermedio del puente, no
+como reemplazo del fallback final: cubre las caídas de Codex (offline, sin
+cuota) sin gastar el modelo ya benchmarkeado arriba como red de seguridad.
+Pasó primero por Qwen Image 3 Pro, comparado lado a lado con el puente en la
+misma palabra ("araña"): anatomía correcta pero paleta poco fiel al objeto
+real (azul, morado, rojo según la corrida) y lento (45-67 s). Un segundo
+comparativo contra FLUX.2 Pro, Seedream 4.5 y Grok Imagine Image Quality lo
+reemplazó: FLUX.2 Pro salió más barato ($0,03 vs $0,04-0,075), 4-9× más
+rápido (10 s) y con paleta simple y coherente en vez de mezclas al azar.
+Seedream 4.5 quedó descartado aparte por ignorar "fondo blanco puro" (entregó
+fondo negro). Detalle y las imágenes de ambos comparativos en
 wiki/projects/agendapro/decisions/.
 """
 
@@ -82,11 +85,11 @@ REQUEST_TIMEOUT = 120.0
 COSTO_ESTIMADO_IA = 0.018
 
 # Respaldo intermedio cuando el puente de Codex falla o no está configurado.
-# Tamaño fijo en 1024x1024: a 2048x2048 (su default) el costo real medido casi
-# se duplica ($0,075 vs $0,04) sin ganancia para una tarjeta de vocabulario.
-QWEN_MODEL = "qwen/qwen-image-3-pro"
-QWEN_SIZE = "1024x1024"
-COSTO_ESTIMADO_QWEN = 0.04
+# Ganó el comparativo del 2026-08-06 a Qwen Image 3 Pro, Seedream 4.5 y Grok
+# Imagine: más barato, 4-9x más rápido y con paleta coherente en vez de azar.
+FLUX_MODEL = "black-forest-labs/flux.2-pro"
+FLUX_SIZE = "1024x1024"
+COSTO_ESTIMADO_FLUX = 0.03
 
 
 ARASAAC_SEARCH = "https://api.arasaac.org/v1/pictograms/es/search/{palabra}"
@@ -102,7 +105,7 @@ BRIDGE_TIMEOUT = 300.0
 
 FUENTE_ARASAAC = "ARASAAC"
 FUENTE_CODEX = "codex"
-FUENTE_QWEN = "qwen"
+FUENTE_FLUX = "flux"
 FUENTE_IA = "ia"
 
 
@@ -164,8 +167,8 @@ async def _from_codex(client: httpx.AsyncClient, word: str, style: str) -> bytes
         return None
 
 
-async def _from_qwen(client: httpx.AsyncClient, api_key: str, word: str, style: str) -> bytes | None:
-    """Genera con Qwen Image 3 Pro, o None si falla. Ver nota del módulo.
+async def _from_flux(client: httpx.AsyncClient, api_key: str, word: str, style: str) -> bytes | None:
+    """Genera con FLUX.2 Pro, o None si falla. Ver nota del módulo.
 
     Respaldo intermedio: cubre las caídas del puente de Codex sin gastar el
     modelo por defecto (`_request_image`), que quedó elegido por benchmark
@@ -183,14 +186,14 @@ async def _from_qwen(client: httpx.AsyncClient, api_key: str, word: str, style: 
                 "X-Title": "AgendaPro",
             },
             json={
-                "model": QWEN_MODEL,
+                "model": FLUX_MODEL,
                 "prompt": build_prompt(word, style),
                 "n": 1,
-                "size": QWEN_SIZE,
+                "size": FLUX_SIZE,
             },
         )
         if response.status_code != 200:
-            logger.info("Qwen Image 3 Pro no pudo con '%s': HTTP %s", word, response.status_code)
+            logger.info("FLUX.2 Pro no pudo con '%s': HTTP %s", word, response.status_code)
             return None
 
         payload = response.json()
@@ -203,10 +206,10 @@ async def _from_qwen(client: httpx.AsyncClient, api_key: str, word: str, style: 
 
         cost = (payload.get("usage") or {}).get("cost")
         if cost is not None:
-            logger.info("Imagen generada con %s — costo real $%.5f", QWEN_MODEL, float(cost))
+            logger.info("Imagen generada con %s — costo real $%.5f", FLUX_MODEL, float(cost))
         return base64.b64decode(encoded)
     except Exception as exc:
-        logger.info("Qwen Image 3 Pro no disponible para '%s': %s", word, exc)
+        logger.info("FLUX.2 Pro no disponible para '%s': %s", word, exc)
         return None
 
 
@@ -355,11 +358,11 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
                     raw = await _from_codex(client, word, style)
                     fuente = FUENTE_CODEX
 
-                # 3) Qwen Image 3 Pro: respaldo intermedio cuando el puente no
-                #    está, se cayó o se agotó la cuota. ~$0,04, ~45 s.
+                # 3) FLUX.2 Pro: respaldo intermedio cuando el puente no está,
+                #    se cayó o se agotó la cuota. ~$0,03, ~10 s.
                 if raw is None:
-                    raw = await _from_qwen(client, settings.openrouter_key, word, style)
-                    fuente = FUENTE_QWEN
+                    raw = await _from_flux(client, settings.openrouter_key, word, style)
+                    fuente = FUENTE_FLUX
 
                 # 4) OpenRouter (modelo por defecto): red de seguridad final,
                 #    siempre responde. Cuesta ~$0,018 pero siempre responde.
@@ -401,16 +404,16 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
     de_cache = len(words) - len(pending)
     de_arasaac = sum(1 for f in origen.values() if f == FUENTE_ARASAAC)
     de_codex = sum(1 for f in origen.values() if f == FUENTE_CODEX)
-    de_qwen = sum(1 for f in origen.values() if f == FUENTE_QWEN)
+    de_flux = sum(1 for f in origen.values() if f == FUENTE_FLUX)
     de_ia = sum(1 for f in origen.values() if f == FUENTE_IA)
     logger.info(
-        "Imágenes: %d de caché, %d de ARASAAC, %d por Codex, %d por Qwen (~$%.3f), "
+        "Imágenes: %d de caché, %d de ARASAAC, %d por Codex, %d por FLUX.2 Pro (~$%.3f), "
         "%d por OpenRouter (~$%.3f), %d fallidas",
         de_cache,
         de_arasaac,
         de_codex,
-        de_qwen,
-        de_qwen * COSTO_ESTIMADO_QWEN,
+        de_flux,
+        de_flux * COSTO_ESTIMADO_FLUX,
         de_ia,
         de_ia * COSTO_ESTIMADO_IA,
         len(pending) - len(origen),
