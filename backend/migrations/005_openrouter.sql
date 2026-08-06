@@ -13,7 +13,7 @@
 
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS openrouter_api_key VARCHAR;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS text_model  VARCHAR DEFAULT 'deepseek/deepseek-v4-flash';
-ALTER TABLE settings ADD COLUMN IF NOT EXISTS image_model VARCHAR DEFAULT 'google/gemini-3.1-flash-lite-image';
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS image_model VARCHAR DEFAULT 'openai/gpt-image-2';
 
 -- Sanear los model IDs muertos para que Configuración no ofrezca opciones rotas.
 UPDATE settings
@@ -28,4 +28,4 @@ UPDATE settings
 
 -- Rellenar los defaults en filas que ya existían antes de esta migración.
 UPDATE settings SET text_model  = 'deepseek/deepseek-v4-flash'          WHERE text_model  IS NULL;
-UPDATE settings SET image_model = 'google/gemini-3.1-flash-lite-image'  WHERE image_model IS NULL;
+UPDATE settings SET image_model = 'openai/gpt-image-2'  WHERE image_model IS NULL;

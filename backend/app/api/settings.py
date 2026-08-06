@@ -16,7 +16,7 @@ from app.utils.auth import get_current_user
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 DEFAULT_TEXT_MODEL = "deepseek/deepseek-v4-flash"
-DEFAULT_IMAGE_MODEL = "google/gemini-3.1-flash-lite-image"
+DEFAULT_IMAGE_MODEL = "openai/gpt-image-2"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_XAI_MODEL = "grok-3-mini"

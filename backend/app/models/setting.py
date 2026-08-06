@@ -11,7 +11,7 @@ class Setting(Base):
     # Pasarela principal: cubre texto e imágenes con una sola clave.
     openrouter_api_key = Column(String, nullable=True)
     text_model = Column(String, default="deepseek/deepseek-v4-flash")
-    image_model = Column(String, default="google/gemini-3.1-flash-lite-image")
+    image_model = Column(String, default="openai/gpt-image-2")
 
     # Proveedores directos, opcionales: solo se usan si el usuario pone su
     # propia clave. Ninguno es el camino por defecto.

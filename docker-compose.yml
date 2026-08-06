@@ -19,7 +19,7 @@ services:
       # Pasarela principal: cubre texto e imágenes con una sola clave.
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_TEXT_MODEL=${OPENROUTER_TEXT_MODEL:-deepseek/deepseek-v4-flash}
-      - OPENROUTER_IMAGE_MODEL=${OPENROUTER_IMAGE_MODEL:-google/gemini-3.1-flash-lite-image}
+      - OPENROUTER_IMAGE_MODEL=${OPENROUTER_IMAGE_MODEL:-openai/gpt-image-2}
       # Proveedores directos, opcionales.
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}

@@ -27,6 +27,12 @@ Respondes exclusivamente con un JSON que respete el esquema entregado."""
 
 DocType = Literal["prueba", "evaluacion", "guia", "planificacion", "ficha"]
 
+# Requisito de la licencia CC BY-NC-SA de los pictogramas.
+ATRIBUCION_IMAGENES = (
+    "Pictogramas: ARASAAC (arasaac.org), Gobierno de Aragón, "
+    "autoría de Sergio Palao, licencia CC BY-NC-SA."
+)
+
 DOC_TYPE_MAPPING: dict[str, str] = {
     "prueba": "prueba de conocimientos",
     "evaluacion": "evaluación sumativa",
@@ -639,6 +645,15 @@ async def export_pdf(data: ExportRequest, current_user: User = Depends(get_curre
 
         story.append(Spacer(1, 4 * mm))
 
+    if data.activity_images:
+        # La licencia CC BY-NC-SA de ARASAAC exige citar la fuente en el
+        # material donde aparecen los pictogramas.
+        story.append(Spacer(1, 4 * mm))
+        story.append(Paragraph(
+            f"<font size='7' color='grey'>{ATRIBUCION_IMAGENES}</font>",
+            ParagraphStyle("Attr", parent=body_style, fontSize=7),
+        ))
+
     pdf.build(story)
     buf.seek(0)
     return StreamingResponse(
@@ -742,6 +757,11 @@ async def export_docx(data: ExportRequest, current_user: User = Depends(get_curr
                 answer_paragraph = docx.add_paragraph(f"✓ {_strip_md(item.answer)}")
                 answer_paragraph.runs[0].font.color.rgb = RGBColor(0x05, 0x96, 0x69)
                 answer_paragraph.runs[0].font.size = Pt(9)
+
+    if data.activity_images:
+        attr = docx.add_paragraph(ATRIBUCION_IMAGENES)
+        attr.runs[0].font.size = Pt(7)
+        attr.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
     buf = io.BytesIO()
     docx.save(buf)

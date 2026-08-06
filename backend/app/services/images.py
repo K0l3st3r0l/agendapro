@@ -1,14 +1,47 @@
-"""Generación de ilustraciones por la Image API de OpenRouter.
+"""Ilustraciones para las actividades, en tres capas.
 
-Reemplaza las rutas de imágenes de Gemini y DALL·E, que quedaron inutilizables:
-Gemini devuelve 429 por cuota agotada y el modelo configurado por defecto
-(`gemini-2.0-flash-preview-image-generation`) ya no existe en la API.
+    1. Caché en disco       — costo cero, latencia cero
+    2. ARASAAC              — costo cero, ~0,3 s, pictogramas educativos
+    3. OpenRouter (IA)      — ~$0,018 por imagen, 25 s, para lo que no esté arriba
 
-El caché por hash de contenido es la palanca de costo más importante del
-módulo. Antes había 108 imágenes en disco (83 MB) contra un solo documento
-guardado, sin ninguna deduplicación: cada guía regeneraba "sol", "gato" y
-"casa" desde cero. En 1° a 4° básico ese vocabulario se repite constantemente,
-así que la tasa de acierto del caché es alta y un acierto cuesta cero.
+**ARASAAC va primero a propósito.** Es el set de pictogramas del Gobierno de
+Aragón, estándar en escuelas hispanohablantes: búsqueda en español, versión en
+color y versión de línea negra para colorear. Para el vocabulario concreto de
+1º a 4º básico —"sol", "gato", "abeja", "pato"— es mejor que la IA en todo lo
+que importa: es gratis, es instantáneo, acierta siempre (la IA a veces dibuja
+algo ambiguo) y mantiene un único lenguaje visual en toda la guía, mientras que
+la IA entrega un estilo distinto en cada imagen.
+
+La IA queda para lo que ARASAAC no cubre: conceptos abstractos o específicos
+("fotosíntesis", "sistema circulatorio") y vocabulario de cursos superiores.
+
+Elección del modelo de respaldo, medida el 2026-08-06 con `usage.cost`:
+
+    openai/gpt-image-2                   $0.0115/img   22 s   ← default
+    black-forest-labs/flux.2-klein-4b    $0.0140/img    3 s
+    black-forest-labs/flux.2-pro         $0.0300/img   13 s
+    google/gemini-3.1-flash-lite-image   $0.0338/img    4 s
+    openai/gpt-5-image-mini              $0.0397/img   40 s
+
+El costo por sí solo elegía mal. El primer benchmark se corrió con "abeja" y
+"pato" —palabras que ARASAAC ya cubre, o sea justamente las que la IA nunca va
+a ver— y coronó a FLUX.2 klein por ser barato y rápido. Al repetirlo con el
+caso real de la capa 3 ("sistema circulatorio", "fotosíntesis"), klein devolvió
+un borrón amarillo con el texto inventado "Circulluarri", pese a que el prompt
+pide explícitamente sin texto: un modelo de 4B no sostiene la instrucción
+negativa. gpt-image-2 entregó un diagrama anatómicamente correcto y sin texto,
+además de ser el más barato. La latencia de 22 s se tolera porque este camino
+es excepcional y corre con concurrencia 4.
+
+`openai/gpt-5-image-mini` merece una nota: cuesta $0.000008 por token contra
+$0.00003 de Nano Banana Lite —parecía 4× más barato— y terminó siendo el más
+caro de todos, porque genera muchísimos más tokens por imagen. Los precios de
+lista por token no predicen el costo por imagen.
+
+⚠️ Licencia: los pictogramas de ARASAAC son CC BY-NC-SA. Sirven para material
+de aula (uso educativo no comercial) citando la fuente, que es lo que hacen los
+exportadores. Si AgendaPro pasa a ser un producto pago hay que revisar esto:
+la cláusula NC no lo permitiría y habría que caer a la IA o licenciar otro set.
 """
 
 import asyncio
@@ -32,9 +65,48 @@ PUBLIC_PREFIX = "/static/images"
 MAX_CONCURRENT = 4
 REQUEST_TIMEOUT = 120.0
 
+# Costo medido de openai/gpt-image-2, solo para reportar el gasto en los logs.
+COSTO_ESTIMADO_IA = 0.018
+
+
+ARASAAC_SEARCH = "https://api.arasaac.org/v1/pictograms/es/search/{palabra}"
+ARASAAC_IMAGE = "https://api.arasaac.org/v1/pictograms/{pid}"
+ARASAAC_TIMEOUT = 20.0
+FUENTE_ARASAAC = "ARASAAC"
+FUENTE_IA = "ia"
+
 
 class ImageGenerationError(Exception):
     """Fallo al generar una imagen concreta. No aborta el lote completo."""
+
+
+async def _from_arasaac(client: httpx.AsyncClient, word: str, style: str) -> bytes | None:
+    """Descarga el pictograma de ARASAAC, o None si no existe la palabra."""
+    try:
+        search = await client.get(ARASAAC_SEARCH.format(palabra=word), timeout=ARASAAC_TIMEOUT)
+        if search.status_code != 200:
+            return None
+        resultados = search.json()
+        if not isinstance(resultados, list) or not resultados:
+            return None
+
+        pid = resultados[0].get("_id")
+        if not pid:
+            return None
+
+        # `color=false` entrega la versión de línea negra, que es justo lo que
+        # necesita una actividad de colorear. La IA acierta eso a medias.
+        params = {"resolution": "500"}
+        if style == "coloring":
+            params["color"] = "false"
+
+        imagen = await client.get(ARASAAC_IMAGE.format(pid=pid), params=params, timeout=ARASAAC_TIMEOUT)
+        if imagen.status_code != 200 or not imagen.content.startswith(b"\x89PNG"):
+            return None
+        return imagen.content
+    except Exception as exc:
+        logger.debug("ARASAAC no resolvió '%s': %s", word, exc)
+        return None
 
 
 def build_prompt(word: str, style: str) -> str:
@@ -158,26 +230,37 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
         else:
             pending[word] = style
 
-    if pending and not settings.openrouter_key:
-        logger.warning("Sin OPENROUTER_API_KEY: %d imágenes quedan sin generar", len(pending))
-        return results
-
     if not pending:
         logger.info("Caché completo: %d/%d imágenes servidas sin costo", len(results), len(words))
         return results
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+    origen: dict[str, str] = {}
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
 
         async def one(word: str, style: str) -> tuple[str, str | None]:
             async with semaphore:
                 path, url = cache_path(word, style, model)
-                try:
-                    raw = await _request_image(client, settings.openrouter_key, model, build_prompt(word, style))
-                except Exception as exc:
-                    logger.warning("No se pudo generar la imagen de '%s': %s", word, exc)
-                    return word, None
+
+                # 1) ARASAAC: gratis e instantáneo. Cubre casi todo el
+                #    vocabulario concreto de básica.
+                raw = await _from_arasaac(client, word, style)
+                fuente = FUENTE_ARASAAC
+
+                # 2) IA: solo para lo que ARASAAC no tiene.
+                if raw is None:
+                    if not settings.openrouter_key:
+                        logger.info("'%s' no está en ARASAAC y no hay clave de OpenRouter", word)
+                        return word, None
+                    try:
+                        raw = await _request_image(
+                            client, settings.openrouter_key, model, build_prompt(word, style)
+                        )
+                        fuente = FUENTE_IA
+                    except Exception as exc:
+                        logger.warning("No se pudo generar la imagen de '%s': %s", word, exc)
+                        return word, None
 
                 # Escritura atómica: un archivo a medio escribir quedaría en el
                 # caché para siempre, servido como imagen corrupta.
@@ -191,6 +274,8 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
                     if os.path.exists(tmp):
                         os.unlink(tmp)
                     return word, None
+
+                origen[word] = fuente
                 return word, url
 
         done = await asyncio.gather(*(one(w, s) for w, s in pending.items()))
@@ -199,10 +284,15 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
         if url:
             results[word] = url
 
+    de_cache = len(words) - len(pending)
+    de_arasaac = sum(1 for f in origen.values() if f == FUENTE_ARASAAC)
+    de_ia = sum(1 for f in origen.values() if f == FUENTE_IA)
     logger.info(
-        "Imágenes: %d de caché, %d generadas, %d fallidas",
-        len(words) - len(pending),
-        len(results) - (len(words) - len(pending)),
-        len(pending) - (len(results) - (len(words) - len(pending))),
+        "Imágenes: %d de caché, %d de ARASAAC, %d por IA (~$%.3f), %d fallidas",
+        de_cache,
+        de_arasaac,
+        de_ia,
+        de_ia * COSTO_ESTIMADO_IA,
+        len(pending) - len(origen),
     )
     return results

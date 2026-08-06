@@ -28,16 +28,22 @@ ENDPOINT = "https://openrouter.ai/api/v1/images"
 OUT_DIR = "/app/static/bench"
 
 MODELOS = [
-    "google/gemini-3.1-flash-lite-image",
-    "google/gemini-3.1-flash-image",
-    "black-forest-labs/flux.2-klein-4b",
-    "black-forest-labs/flux.2-pro",
+    "openai/gpt-5-image-mini",
     "openai/gpt-image-2",
+    "black-forest-labs/flux.2-klein-4b",
+    "google/gemini-3.1-flash-lite-image",
 ]
 
 # Vocabulario real de las guías de sonido inicial de 1º básico.
-PALABRAS = ["abeja", "araña", "sol", "mesa", "pato", "luna"]
+# Se corre con pocas palabras a propósito: cada imagen cuesta plata de verdad
+# (~$0.03 en Nano Banana 2 Lite), así que el set completo de 5 modelos × 6
+# palabras × 2 estilos serían ~60 imágenes. Con 2 palabras alcanza para juzgar
+# calidad y medir el costo por imagen. Se ajusta con el primer argumento.
+PALABRAS = ["abeja", "pato", "sol", "mesa", "araña", "luna"]
 ESTILOS = ["photo", "coloring"]
+
+# Tope de gasto: si el acumulado lo pasa, el benchmark se detiene.
+PRESUPUESTO_USD = 1.50
 
 
 def prompt_for(word: str, style: str) -> str:
@@ -85,8 +91,15 @@ async def main() -> int:
         print("Falta OPENROUTER_API_KEY en el entorno del contenedor.")
         return 1
 
+    n_palabras = int(sys.argv[1]) if len(sys.argv) > 1 else 2
+    palabras = PALABRAS[:n_palabras]
+    total_imgs = len(MODELOS) * len(ESTILOS) * len(palabras)
+    print(f"{total_imgs} imágenes ({len(MODELOS)} modelos × {len(ESTILOS)} estilos × {len(palabras)} palabras)")
+    print(f"Tope de gasto: ${PRESUPUESTO_USD:.2f}\n")
+
     os.makedirs(OUT_DIR, exist_ok=True)
     resultados: dict[str, list[dict]] = {}
+    gastado = 0.0
 
     async with httpx.AsyncClient(timeout=180) as client:
         for model in MODELOS:
@@ -94,18 +107,28 @@ async def main() -> int:
             print(f"\n=== {model} ===")
             for style in ESTILOS:
                 # De a uno para no gatillar rate limits y medir latencia limpia.
-                for word in PALABRAS:
+                for word in palabras:
+                    if gastado >= PRESUPUESTO_USD:
+                        print(f"  -- tope de ${PRESUPUESTO_USD:.2f} alcanzado, se detiene --")
+                        resultados[model] = filas
+                        return resumir(resultados, gastado)
+
                     resultado = await generar(client, key, model, word, style)
                     resultado.update({"palabra": word, "estilo": style})
                     filas.append(resultado)
+                    gastado += resultado.get("costo", 0.0)
                     estado = (
-                        f"${resultado['costo']:.5f}  {resultado['segundos']:5.1f}s"
+                        f"${resultado['costo']:.5f}  {resultado['segundos']:5.1f}s   (acum ${gastado:.3f})"
                         if resultado["ok"]
-                        else f"FALLA {resultado['error'][:70]}"
+                        else f"FALLA {resultado['error'][:66]}"
                     )
                     print(f"  {style:9s} {word:9s} {estado}")
             resultados[model] = filas
 
+    return resumir(resultados, gastado)
+
+
+def resumir(resultados: dict[str, list[dict]], gastado: float) -> int:
     print("\n" + "=" * 76)
     print(f"{'Modelo':<40}{'ok':>4}{'costo/img':>12}{'seg/img':>10}{'20 imgs':>10}")
     print("=" * 76)
@@ -113,12 +136,16 @@ async def main() -> int:
     for model, filas in resultados.items():
         ok = [f for f in filas if f["ok"]]
         if not ok:
-            print(f"{model:<40}{0:>4}{'—':>12}{'—':>10}{'—':>10}")
+            motivo = filas[0]["error"][:40] if filas else "sin datos"
+            print(f"{model:<40}{0:>4}  {motivo}")
             continue
         costo = sum(f["costo"] for f in ok) / len(ok)
         seg = sum(f["segundos"] for f in ok) / len(ok)
         print(f"{model:<40}{len(ok):>4}{costo:>12.5f}{seg:>10.1f}{costo * 20:>10.3f}")
         resumen.append((model, costo, seg, len(ok)))
+
+    print("=" * 76)
+    print(f"Gasto total del benchmark: ${gastado:.3f}")
 
     escribir_html(resultados, resumen)
     print(f"\nComparación visual: {OUT_DIR}/index.html  →  https://agendapro.laravas.com/static/bench/index.html")
