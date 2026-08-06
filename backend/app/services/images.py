@@ -167,6 +167,33 @@ async def _from_codex(client: httpx.AsyncClient, word: str, style: str) -> bytes
         return None
 
 
+async def _from_codex_cover(
+    client: httpx.AsyncClient, subject: str, grade_level: str, topic: str
+) -> bytes | None:
+    """Portada vía el puente del host, o None si no está o falla.
+
+    Igual que `_from_codex`: el puente valida cada campo y arma el prompt, acá
+    solo se le pasan subject/grade_level/topic sueltos, nunca texto libre.
+    """
+    if not BRIDGE_URL or not BRIDGE_TOKEN:
+        return None
+    try:
+        response = await client.post(
+            f"{BRIDGE_URL.rstrip('/')}/cover",
+            headers={"X-Bridge-Token": BRIDGE_TOKEN},
+            json={"subject": subject, "grade_level": grade_level, "topic": topic},
+            timeout=BRIDGE_TIMEOUT,
+        )
+        if response.status_code != 200:
+            logger.info("El puente de Codex no pudo con la portada '%s': %s", topic, response.text[:120])
+            return None
+        raw = base64.b64decode((response.json() or {}).get("b64") or "")
+        return raw if raw.startswith(b"\x89PNG") else None
+    except Exception as exc:
+        logger.info("Puente de Codex no disponible para la portada '%s': %s", topic, exc)
+        return None
+
+
 async def _from_flux(client: httpx.AsyncClient, api_key: str, word: str, style: str) -> bytes | None:
     """Genera con FLUX.2 Pro, o None si falla. Ver nota del módulo.
 
@@ -276,8 +303,12 @@ async def generate_cover(settings: AISettings, subject: str, grade_level: str, t
 
     Se genera solo cuando la profesora marca la casilla. Antes se forzaba para
     toda guía o ficha, sumando ~10 s y costo a documentos que no la pedían.
+
+    Prueba primero el puente de Codex (gratis en dólares, ~35 s) y cae a
+    OpenRouter si no está configurado o falla — mismo orden que las palabras
+    de vocabulario en `generate_images()`.
     """
-    if not settings.openrouter_key:
+    if not settings.openrouter_key and not (BRIDGE_URL and BRIDGE_TOKEN):
         return None
 
     descriptor = f"{topic} ({subject}, {grade_level})"
@@ -291,12 +322,17 @@ async def generate_cover(settings: AISettings, subject: str, grade_level: str, t
         return url
 
     os.makedirs(IMAGES_DIR, exist_ok=True)
-    try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            raw = await _request_image(client, settings.openrouter_key, settings.image_model, prompt)
-    except Exception as exc:
-        logger.warning("No se pudo generar la portada de '%s': %s", descriptor, exc)
-        return None
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        raw = await _from_codex_cover(client, subject, grade_level, topic)
+        if raw is None:
+            if not settings.openrouter_key:
+                logger.info("Portada de '%s' no salió del puente, y no hay clave de OpenRouter", descriptor)
+                return None
+            try:
+                raw = await _request_image(client, settings.openrouter_key, settings.image_model, prompt)
+            except Exception as exc:
+                logger.warning("No se pudo generar la portada de '%s': %s", descriptor, exc)
+                return None
 
     tmp = f"{path}.{os.getpid()}.tmp"
     try:

@@ -11,16 +11,26 @@ de ChatGPT y no consume créditos en dólares. Es más lenta que la API (~35 s
 contra 22 s) y gasta cuota del plan, así que en la cascada de `images.py` va
 después de ARASAAC y antes de FLUX.2 por OpenRouter.
 
+Dos rutas: `/image` (palabra + estilo, para las tarjetas de vocabulario) y
+`/cover` (subject + grade_level + topic, para la portada del documento). El
+formulario de la profesora llena directamente subject/grade_level/topic —a
+diferencia de las palabras, que pasan por un modelo antes de llegar acá— pero
+igual es texto no confiable, así que se valida con el mismo criterio.
+
 Superficie de ataque y cómo se cierra:
 
 - **Solo escucha en la IP del bridge de Docker**, nunca en 0.0.0.0.
 - **Token compartido** en la cabecera `X-Bridge-Token`.
-- **El cliente NO manda el prompt.** Manda una palabra y un estilo; la plantilla
-  del prompt vive acá. Eso corta de raíz la inyección: las palabras vienen de un
-  documento generado por IA a partir del texto que escribe la profesora, así que
-  son entrada no confiable.
-- **La palabra se valida contra una lista blanca** de letras y espacios. Nada de
-  comillas, backticks, saltos de línea ni metacaracteres de shell.
+- **El cliente NO manda el prompt.** Manda los campos sueltos (palabra+estilo,
+  o subject+grade_level+topic); la plantilla del prompt vive acá. Eso corta de
+  raíz la inyección: las palabras vienen de un documento generado por IA a
+  partir del texto que escribe la profesora, y subject/grade_level/topic los
+  escribe ella directo — en ambos casos, entrada no confiable.
+- **Cada campo se valida por separado** contra su propia lista blanca (letras,
+  espacios y puntuación mínima según el campo) y un tope de palabras. Nada de
+  comillas, backticks, saltos de línea ni metacaracteres de shell, y los
+  campos nunca se concatenan antes de validar — así ninguno mete estructura en
+  los otros.
 - `codex exec` corre con `--sandbox read-only`, verificado que igual genera.
 - Una sola generación a la vez: cada invocación levanta un agente completo.
 
@@ -62,6 +72,16 @@ PALABRA_RE = re.compile(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚ
 # evita el desperdicio.
 MAX_PALABRAS = 3
 
+# Lista blanca para /cover: subject, grade_level y topic llegan del formulario
+# que llena la profesora — texto no confiable, igual que las palabras de
+# /image. Se validan por separado (nunca concatenados) para que ningún campo
+# pueda inyectar estructura en los otros dos.
+SUBJECT_RE = re.compile(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ, \-]{1,58}$")
+GRADE_LEVEL_RE = re.compile(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9°\- ]{1,19}$")
+TOPIC_RE = re.compile(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9,\. \-]{1,79}$")
+MAX_PALABRAS_SUBJECT = 6
+MAX_PALABRAS_TOPIC = 8
+
 _una_a_la_vez = threading.Semaphore(1)
 
 
@@ -83,24 +103,33 @@ def construir_prompt(palabra: str, estilo: str) -> str:
     )
 
 
+def construir_prompt_cover(subject: str, grade_level: str, topic: str) -> str:
+    """Prompt de portada. Espeja generate_cover() del backend."""
+    descriptor = f"{topic} ({subject}, {grade_level})"
+    return (
+        f"Ilustración educativa de portada sobre: {descriptor}. "
+        "Estilo alegre y colorido para material escolar infantil, composición horizontal, "
+        "fondo claro y limpio, sin texto ni letras. Solo genera la imagen, no expliques nada."
+    )
+
+
 def _pngs_conocidos() -> dict[str, float]:
     patron = os.path.join(CODEX_HOME, "generated_images", "*", "*.png")
     return {ruta: os.path.getmtime(ruta) for ruta in glob.glob(patron)}
 
 
-def generar(palabra: str, estilo: str) -> tuple[bytes | None, float, str]:
-    """Devuelve (png, segundos, error). El semáforo serializa las corridas."""
+def _ejecutar_codex(prompt: str) -> tuple[bytes | None, float, str]:
+    """Corre Codex con el prompt dado. Devuelve (png, segundos, error).
+
+    El semáforo serializa las corridas: cada invocación levanta un agente
+    completo, y correr dos a la vez no acelera nada.
+    """
     inicio = time.time()
     with _una_a_la_vez:
         previos = _pngs_conocidos()
         try:
             proceso = subprocess.run(
-                [
-                    CODEX_BIN, "exec",
-                    "--skip-git-repo-check",
-                    "--sandbox", "read-only",
-                    construir_prompt(palabra, estilo),
-                ],
+                [CODEX_BIN, "exec", "--skip-git-repo-check", "--sandbox", "read-only", prompt],
                 capture_output=True,
                 timeout=TIMEOUT_S,
                 cwd="/tmp",
@@ -126,6 +155,14 @@ def generar(palabra: str, estilo: str) -> tuple[bytes | None, float, str]:
     return datos, time.time() - inicio, ""
 
 
+def generar(palabra: str, estilo: str) -> tuple[bytes | None, float, str]:
+    return _ejecutar_codex(construir_prompt(palabra, estilo))
+
+
+def generar_cover(subject: str, grade_level: str, topic: str) -> tuple[bytes | None, float, str]:
+    return _ejecutar_codex(construir_prompt_cover(subject, grade_level, topic))
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -147,26 +184,35 @@ class Handler(BaseHTTPRequestHandler):
             self._responder(404, {"error": "ruta desconocida"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/image":
+        if self.path == "/image":
+            self._handle_image()
+        elif self.path == "/cover":
+            self._handle_cover()
+        else:
             self._responder(404, {"error": "ruta desconocida"})
-            return
 
-        if not TOKEN or self.headers.get("X-Bridge-Token") != TOKEN:
-            self._responder(401, {"error": "token inválido"})
-            return
-
+    def _leer_json(self) -> dict | None:
+        """Lee y parsea el cuerpo, o None si está vacío/roto (ya respondió el error)."""
         try:
             largo = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             largo = 0
         if largo <= 0 or largo > MAX_BODY:
             self._responder(400, {"error": "cuerpo ausente o demasiado grande"})
-            return
-
+            return None
         try:
-            datos = json.loads(self.rfile.read(largo))
+            return json.loads(self.rfile.read(largo))
         except Exception:
             self._responder(400, {"error": "JSON inválido"})
+            return None
+
+    def _handle_image(self) -> None:
+        if not TOKEN or self.headers.get("X-Bridge-Token") != TOKEN:
+            self._responder(401, {"error": "token inválido"})
+            return
+
+        datos = self._leer_json()
+        if datos is None:
             return
 
         palabra = str(datos.get("word", "")).strip()
@@ -188,6 +234,45 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         logger.info("generada '%s' (%s) en %.1fs, %d bytes", palabra, estilo, segundos, len(png))
+        self._responder(200, {
+            "b64": base64.b64encode(png).decode(),
+            "seconds": round(segundos, 1),
+        })
+
+    def _handle_cover(self) -> None:
+        if not TOKEN or self.headers.get("X-Bridge-Token") != TOKEN:
+            self._responder(401, {"error": "token inválido"})
+            return
+
+        datos = self._leer_json()
+        if datos is None:
+            return
+
+        subject = str(datos.get("subject", "")).strip()
+        grade_level = str(datos.get("grade_level", "")).strip()
+        topic = str(datos.get("topic", "")).strip()
+
+        # Cada campo se valida por separado, nunca el texto combinado: así
+        # ningún campo puede meter estructura (paréntesis, comas de otro campo)
+        # en los otros. Mismo tope de palabras que /image y por la misma razón:
+        # cortar frases largas antes de gastar cuota en algo inútil.
+        if not SUBJECT_RE.match(subject) or len(subject.split()) > MAX_PALABRAS_SUBJECT:
+            self._responder(400, {"error": "subject no permitido"})
+            return
+        if not GRADE_LEVEL_RE.match(grade_level):
+            self._responder(400, {"error": "grade_level no permitido"})
+            return
+        if not TOPIC_RE.match(topic) or len(topic.split()) > MAX_PALABRAS_TOPIC:
+            self._responder(400, {"error": "topic no permitido"})
+            return
+
+        png, segundos, error = generar_cover(subject, grade_level, topic)
+        if png is None:
+            logger.warning("falló portada '%s' (%s, %s): %s", topic, subject, grade_level, error)
+            self._responder(502, {"error": error, "seconds": round(segundos, 1)})
+            return
+
+        logger.info("portada generada '%s' en %.1fs, %d bytes", topic, segundos, len(png))
         self._responder(200, {
             "b64": base64.b64encode(png).decode(),
             "seconds": round(segundos, 1),
