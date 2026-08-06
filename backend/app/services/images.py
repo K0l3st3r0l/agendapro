@@ -72,7 +72,16 @@ COSTO_ESTIMADO_IA = 0.018
 ARASAAC_SEARCH = "https://api.arasaac.org/v1/pictograms/es/search/{palabra}"
 ARASAAC_IMAGE = "https://api.arasaac.org/v1/pictograms/{pid}"
 ARASAAC_TIMEOUT = 20.0
+
+# Puente en el host hacia la herramienta `image_gen` de Codex. Genera contra la
+# suscripción de ChatGPT, así que no gasta créditos en dólares — pero sí cuota
+# del plan y ~35 s por imagen. Ver agent-bridge/bridge.py.
+BRIDGE_URL = os.getenv("AGENT_BRIDGE_URL", "")
+BRIDGE_TOKEN = os.getenv("AGENT_BRIDGE_TOKEN", "")
+BRIDGE_TIMEOUT = 300.0
+
 FUENTE_ARASAAC = "ARASAAC"
+FUENTE_CODEX = "codex"
 FUENTE_IA = "ia"
 
 
@@ -106,6 +115,31 @@ async def _from_arasaac(client: httpx.AsyncClient, word: str, style: str) -> byt
         return imagen.content
     except Exception as exc:
         logger.debug("ARASAAC no resolvió '%s': %s", word, exc)
+        return None
+
+
+async def _from_codex(client: httpx.AsyncClient, word: str, style: str) -> bytes | None:
+    """Genera con Codex a través del puente del host, o None si no está o falla.
+
+    El puente valida la palabra y arma el prompt: acá solo se le pasan la palabra
+    y el estilo, nunca texto libre.
+    """
+    if not BRIDGE_URL or not BRIDGE_TOKEN:
+        return None
+    try:
+        response = await client.post(
+            f"{BRIDGE_URL.rstrip('/')}/image",
+            headers={"X-Bridge-Token": BRIDGE_TOKEN},
+            json={"word": word, "style": style},
+            timeout=BRIDGE_TIMEOUT,
+        )
+        if response.status_code != 200:
+            logger.info("El puente de Codex no pudo con '%s': %s", word, response.text[:120])
+            return None
+        raw = base64.b64decode((response.json() or {}).get("b64") or "")
+        return raw if raw.startswith(b"\x89PNG") else None
+    except Exception as exc:
+        logger.info("Puente de Codex no disponible para '%s': %s", word, exc)
         return None
 
 
@@ -248,10 +282,17 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
                 raw = await _from_arasaac(client, word, style)
                 fuente = FUENTE_ARASAAC
 
-                # 2) IA: solo para lo que ARASAAC no tiene.
+                # 2) Codex: gratis en dólares (va contra la suscripción), pero
+                #    ~35 s por imagen. Solo para lo que ARASAAC no tiene.
+                if raw is None:
+                    raw = await _from_codex(client, word, style)
+                    fuente = FUENTE_CODEX
+
+                # 3) OpenRouter: respaldo cuando el puente no está, se cayó o se
+                #    agotó la cuota del plan. Cuesta ~$0,018 pero siempre responde.
                 if raw is None:
                     if not settings.openrouter_key:
-                        logger.info("'%s' no está en ARASAAC y no hay clave de OpenRouter", word)
+                        logger.info("'%s' no salió de ARASAAC ni de Codex, y no hay clave de OpenRouter", word)
                         return word, None
                     try:
                         raw = await _request_image(
@@ -286,11 +327,13 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
 
     de_cache = len(words) - len(pending)
     de_arasaac = sum(1 for f in origen.values() if f == FUENTE_ARASAAC)
+    de_codex = sum(1 for f in origen.values() if f == FUENTE_CODEX)
     de_ia = sum(1 for f in origen.values() if f == FUENTE_IA)
     logger.info(
-        "Imágenes: %d de caché, %d de ARASAAC, %d por IA (~$%.3f), %d fallidas",
+        "Imágenes: %d de caché, %d de ARASAAC, %d por Codex, %d por OpenRouter (~$%.3f), %d fallidas",
         de_cache,
         de_arasaac,
+        de_codex,
         de_ia,
         de_ia * COSTO_ESTIMADO_IA,
         len(pending) - len(origen),

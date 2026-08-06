@@ -24,6 +24,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
+      # Puente hacia Codex en el host; si falta, las imágenes van por OpenRouter.
+      - AGENT_BRIDGE_URL=${AGENT_BRIDGE_URL:-}
+      - AGENT_BRIDGE_TOKEN=${AGENT_BRIDGE_TOKEN:-}
       - ALLOW_REGISTRATION=false
     volumes:
       - agendapro-static:/app/static
