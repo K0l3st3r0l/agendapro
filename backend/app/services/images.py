@@ -2,7 +2,10 @@
 
     1. Caché en disco       — costo cero, latencia cero
     2. ARASAAC              — costo cero, ~0,3 s, pictogramas educativos
-    3. OpenRouter (IA)      — ~$0,018 por imagen, 25 s, para lo que no esté arriba
+    3. IA, en cascada       — para lo que ARASAAC no cubre:
+       a) Codex (puente)       — $0 en dólares, ~35 s, cuota del plan ChatGPT
+       b) Qwen Image 3 Pro     — ~$0,04/img, ~45 s, si el puente falla o no está
+       c) OpenRouter (default) — ~$0,0115/img, ~22 s, red de seguridad final
 
 **ARASAAC va primero a propósito.** Es el set de pictogramas del Gobierno de
 Aragón, estándar en escuelas hispanohablantes: búsqueda en español, versión en
@@ -42,6 +45,16 @@ lista por token no predicen el costo por imagen.
 de aula (uso educativo no comercial) citando la fuente, que es lo que hacen los
 exportadores. Si AgendaPro pasa a ser un producto pago hay que revisar esto:
 la cláusula NC no lo permitiría y habría que caer a la IA o licenciar otro set.
+
+Qwen Image 3 Pro se agregó el 2026-08-06 como respaldo intermedio del puente,
+no como reemplazo del fallback final: cubre las caídas de Codex (offline, sin
+cuota) sin gastar el modelo ya benchmarkeado arriba como red de seguridad. Se
+pide a 1024x1024 porque a su tamaño por defecto, 2048x2048, el costo real
+medido casi se duplica ($0,075 vs $0,04) sin ganancia para una tarjeta de
+vocabulario chica. Comparado lado a lado con el puente en la misma palabra,
+tiende a elegir paletas poco fieles al objeto real (araña azul, cuerpo
+morado); por eso queda después del puente y no lo reemplaza. Detalle en
+wiki/projects/agendapro/decisions/.
 """
 
 import asyncio
@@ -68,6 +81,13 @@ REQUEST_TIMEOUT = 120.0
 # Costo medido de openai/gpt-image-2, solo para reportar el gasto en los logs.
 COSTO_ESTIMADO_IA = 0.018
 
+# Respaldo intermedio cuando el puente de Codex falla o no está configurado.
+# Tamaño fijo en 1024x1024: a 2048x2048 (su default) el costo real medido casi
+# se duplica ($0,075 vs $0,04) sin ganancia para una tarjeta de vocabulario.
+QWEN_MODEL = "qwen/qwen-image-3-pro"
+QWEN_SIZE = "1024x1024"
+COSTO_ESTIMADO_QWEN = 0.04
+
 
 ARASAAC_SEARCH = "https://api.arasaac.org/v1/pictograms/es/search/{palabra}"
 ARASAAC_IMAGE = "https://api.arasaac.org/v1/pictograms/{pid}"
@@ -82,6 +102,7 @@ BRIDGE_TIMEOUT = 300.0
 
 FUENTE_ARASAAC = "ARASAAC"
 FUENTE_CODEX = "codex"
+FUENTE_QWEN = "qwen"
 FUENTE_IA = "ia"
 
 
@@ -140,6 +161,52 @@ async def _from_codex(client: httpx.AsyncClient, word: str, style: str) -> bytes
         return raw if raw.startswith(b"\x89PNG") else None
     except Exception as exc:
         logger.info("Puente de Codex no disponible para '%s': %s", word, exc)
+        return None
+
+
+async def _from_qwen(client: httpx.AsyncClient, api_key: str, word: str, style: str) -> bytes | None:
+    """Genera con Qwen Image 3 Pro, o None si falla. Ver nota del módulo.
+
+    Respaldo intermedio: cubre las caídas del puente de Codex sin gastar el
+    modelo por defecto (`_request_image`), que quedó elegido por benchmark
+    real como red de seguridad final.
+    """
+    if not api_key:
+        return None
+    try:
+        response = await client.post(
+            IMAGES_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://agendapro.laravas.com",
+                "X-Title": "AgendaPro",
+            },
+            json={
+                "model": QWEN_MODEL,
+                "prompt": build_prompt(word, style),
+                "n": 1,
+                "size": QWEN_SIZE,
+            },
+        )
+        if response.status_code != 200:
+            logger.info("Qwen Image 3 Pro no pudo con '%s': HTTP %s", word, response.status_code)
+            return None
+
+        payload = response.json()
+        data = payload.get("data") or []
+        if not data:
+            return None
+        encoded = data[0].get("b64_json")
+        if not encoded:
+            return None
+
+        cost = (payload.get("usage") or {}).get("cost")
+        if cost is not None:
+            logger.info("Imagen generada con %s — costo real $%.5f", QWEN_MODEL, float(cost))
+        return base64.b64decode(encoded)
+    except Exception as exc:
+        logger.info("Qwen Image 3 Pro no disponible para '%s': %s", word, exc)
         return None
 
 
@@ -288,8 +355,14 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
                     raw = await _from_codex(client, word, style)
                     fuente = FUENTE_CODEX
 
-                # 3) OpenRouter: respaldo cuando el puente no está, se cayó o se
-                #    agotó la cuota del plan. Cuesta ~$0,018 pero siempre responde.
+                # 3) Qwen Image 3 Pro: respaldo intermedio cuando el puente no
+                #    está, se cayó o se agotó la cuota. ~$0,04, ~45 s.
+                if raw is None:
+                    raw = await _from_qwen(client, settings.openrouter_key, word, style)
+                    fuente = FUENTE_QWEN
+
+                # 4) OpenRouter (modelo por defecto): red de seguridad final,
+                #    siempre responde. Cuesta ~$0,018 pero siempre responde.
                 if raw is None:
                     if not settings.openrouter_key:
                         logger.info("'%s' no salió de ARASAAC ni de Codex, y no hay clave de OpenRouter", word)
@@ -328,12 +401,16 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
     de_cache = len(words) - len(pending)
     de_arasaac = sum(1 for f in origen.values() if f == FUENTE_ARASAAC)
     de_codex = sum(1 for f in origen.values() if f == FUENTE_CODEX)
+    de_qwen = sum(1 for f in origen.values() if f == FUENTE_QWEN)
     de_ia = sum(1 for f in origen.values() if f == FUENTE_IA)
     logger.info(
-        "Imágenes: %d de caché, %d de ARASAAC, %d por Codex, %d por OpenRouter (~$%.3f), %d fallidas",
+        "Imágenes: %d de caché, %d de ARASAAC, %d por Codex, %d por Qwen (~$%.3f), "
+        "%d por OpenRouter (~$%.3f), %d fallidas",
         de_cache,
         de_arasaac,
         de_codex,
+        de_qwen,
+        de_qwen * COSTO_ESTIMADO_QWEN,
         de_ia,
         de_ia * COSTO_ESTIMADO_IA,
         len(pending) - len(origen),
