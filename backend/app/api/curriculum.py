@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.curriculum_oa import CurriculumOA
 from app.models.user import User
-from app.services.curriculum_context import fetch_oa
+from app.services.curriculum_context import fetch_indicators, fetch_oa
 from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
@@ -48,8 +48,21 @@ def get_oa(
     current_user: User = Depends(get_current_user),
 ):
     rows = fetch_oa(db, grade_level, subject)
+    indicadores = fetch_indicators(db, [r.id for r in rows])
     return {
         "grade_level": grade_level,
         "subject": subject,
-        "oa": [{"code": r.code, "description": r.description} for r in rows],
+        "oa": [
+            {
+                "code": r.code,
+                "description": r.description,
+                # Lista vacía cuando el Programa de Estudio no trae indicadores
+                # para ese OA: no se rellena con nada generado.
+                "indicators": [
+                    {"text": i.text, "ordinal": i.ordinal, "source": i.source}
+                    for i in indicadores.get(r.id, [])
+                ],
+            }
+            for r in rows
+        ],
     }
