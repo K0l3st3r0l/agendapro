@@ -13,6 +13,7 @@ que manda el cliente: si el frontend pudiera inyectar descripciones de OA, la
 "validación curricular" no validaría nada.
 """
 
+from sqlalchemy import Integer, cast, func
 from sqlalchemy.orm import Session
 
 from app.models.curriculum_indicator import CurriculumIndicator
@@ -39,7 +40,11 @@ def fetch_oa(
     )
     if codes:
         query = query.filter(CurriculumOA.code.in_([c.strip().upper() for c in codes if c.strip()]))
-    return query.order_by(CurriculumOA.id).all()
+    # El código es siempre "OA" + número (ver normalize() en extract_curriculum_oa.py):
+    # se ordena por ese número, no por id ni lexicográficamente, para que OA21 no
+    # caiga después de OA9 ni al final del selector por haberse insertado tarde.
+    orden_numerico = cast(func.substr(CurriculumOA.code, 3), Integer)
+    return query.order_by(orden_numerico).all()
 
 
 def fetch_indicators(db: Session, oa_ids: list[int]) -> dict[int, list[CurriculumIndicator]]:
