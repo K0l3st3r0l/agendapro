@@ -165,6 +165,8 @@ export default function AIConstructor() {
         subject: form.subject,
         grade_level: form.grade_level,
         topic: form.topic,
+        // Sin esto el optimizador trabaja a ciegas respecto del objetivo elegido.
+        oa_codes: form.oa_codes,
       });
       setForm(f => ({ ...f, instructions: res.data.optimized }));
       toast.success('Instrucciones optimizadas ✨');
@@ -343,12 +345,20 @@ export default function AIConstructor() {
   // Los modelos concretos salen de Configuración, así que aquí no se
   // hardcodean nombres: antes decía "Gemini 3 Flash" mientras el modelo real
   // era otro, y un documento generado con Grok se anunciaba como "OpenAI".
+  //
+  // "Automático" muestra `resolved_provider`, que el backend calcula con la
+  // misma función que usa al generar. Antes mostraba `preferred_provider` —una
+  // preferencia guardada—, así que si esa clave faltaba seguía anunciando un
+  // proveedor que no se iba a usar.
+  const shortModel = (id?: string) => (id ? id.split('/').pop() : '');
   const providerOptions = selectableProviders(settings).map(id => ({
     id,
     desc: id === 'auto'
-      ? `Usa ${providerLabel(preferredProvider)}`
+      ? [providerLabel(String(settings?.resolved_provider ?? preferredProvider)),
+         shortModel(settings?.resolved_model as string | undefined)]
+          .filter(Boolean).join(' · ')
       : id === 'openrouter'
-        ? String(settings?.text_model || 'Modelo configurado')
+        ? shortModel(settings?.text_model as string | undefined) || 'Modelo configurado'
         : 'Con tu propia API Key',
   }));
 

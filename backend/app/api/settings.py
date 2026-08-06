@@ -129,7 +129,23 @@ def get_settings(db: Session = Depends(get_db), current_user: User = Depends(get
     def stored(column: str) -> Optional[str]:
         return getattr(row, column, None) if row else None
 
+    # A qué resuelve realmente el modo "Automático". La UI mostraba
+    # `preferred_provider`, que es solo una preferencia guardada: si esa clave
+    # faltaba, `resolve_provider` caía a otro proveedor y el botón seguía
+    # anunciando el equivocado. Se calcula acá para que la lógica de selección
+    # viva en un solo lugar.
+    from app.services.providers import resolve_provider  # import local: evita ciclo
+
+    try:
+        auto_provider = resolve_provider(resolved, None)
+        auto_model = resolved.model_for(auto_provider)
+    except HTTPException:
+        # Sin ninguna clave configurada. Configuración debe seguir abriéndose.
+        auto_provider, auto_model = None, None
+
     return {
+        "resolved_provider": auto_provider,
+        "resolved_model": auto_model,
         # `has_*` refleja si el proveedor es utilizable, venga la clave de la BD
         # o del entorno. La UI lo usa para no ofrecer proveedores sin clave.
         "has_openrouter": bool(resolved.openrouter_key),

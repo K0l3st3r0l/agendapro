@@ -82,6 +82,7 @@ class OptimizeRequest(BaseModel):
     subject: str = ""
     grade_level: str = ""
     topic: str = ""
+    oa_codes: list[str] = Field(default_factory=list, max_length=20)
 
 
 class SearchImagesRequest(BaseModel):
@@ -328,6 +329,16 @@ async def optimize_instructions(
     """
     settings = get_user_settings(current_user.id, db)
 
+    # El anclaje curricular solo se inyecta cuando la profesora eligió OA.
+    # Sin selección, `build_context` devuelve hasta 12 objetivos y el prompt de
+    # salida son 2-4 oraciones: no puede cubrirlos todos sin volverse genérico,
+    # que es justo lo contrario de lo que se busca al optimizar.
+    curriculum_block = ""
+    if data.oa_codes and data.grade_level and data.subject:
+        curriculum_block = curriculum_context.build_context(
+            db, data.grade_level, data.subject, data.oa_codes
+        )
+
     optimize_prompt = f"""Eres un experto en ingeniería de prompts y diseño instruccional.
 
 CONTEXTO DEL DOCUMENTO A GENERAR:
@@ -350,6 +361,17 @@ del modelo al generar el documento. No parafrasees: expande y enriquece con
 
 FORMATO DE RESPUESTA: un bloque continuo de 2 a 4 oraciones, en español, sin títulos,
 sin viñetas y sin comillas. Directo y técnico, listo para usarse como instrucción adicional."""
+
+    if curriculum_block:
+        optimize_prompt += curriculum_block
+        optimize_prompt += (
+            "\nUSO DE LOS OBJETIVOS DE APRENDIZAJE:\n"
+            "Las instrucciones que escribas deben apuntar específicamente a los OA listados: "
+            "usa sus verbos y su nivel de exigencia para fijar qué habilidad se evalúa y con "
+            "qué profundidad. NO cites los códigos OA en tu respuesta ni menciones el "
+            "currículum: el texto se inserta en un campo de instrucciones adicionales, no en "
+            "el documento que verá el alumno.\n"
+        )
 
     result = await providers.generate_text(settings, prompt=optimize_prompt, max_tokens=2000)
     optimized = result.text.strip()
