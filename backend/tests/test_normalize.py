@@ -110,6 +110,30 @@ def test_collect_image_words_deduplica_entre_secciones():
     assert mapping == {"sol": "photo", "luna": "photo"}, "la primera aparición fija el estilo"
 
 
+def test_purpose_e_indicator_ref_pasan_intactos():
+    doc = normalize_document(
+        {
+            "title": "Guía",
+            "sections": [
+                {
+                    "type": "activities",
+                    "items": [{"text": "Cuenta hasta 10", "purpose": "Ejercitar el conteo", "indicator_ref": "OA1:2"}],
+                }
+            ],
+        }
+    )
+    item = doc.sections[0].items[0]
+    assert item.purpose == "Ejercitar el conteo"
+    assert item.indicator_ref == "OA1:2"
+
+
+def test_purpose_e_indicator_ref_ausentes_quedan_vacios():
+    doc = normalize_document({"title": "T", "sections": [{"content": [{"text": "a"}]}]})
+    item = doc.sections[0].items[0]
+    assert item.purpose == ""
+    assert item.indicator_ref == ""
+
+
 def test_documento_sin_secciones_no_revienta():
     doc = normalize_document({"title": "Vacío"})
     assert doc.sections == []

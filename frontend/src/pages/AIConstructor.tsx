@@ -33,6 +33,8 @@ interface GenerateForm {
   include_images: boolean;
   include_answers: boolean;
   oa_codes: string[];
+  /** Referencias "CODIGO:ordinal" de indicadores elegidos a mano. Vacío = criterio automático del backend. */
+  indicator_refs: string[];
   provider: AIProvider;
 }
 
@@ -47,7 +49,52 @@ const defaultForm: GenerateForm = {
   include_images: false,
   include_answers: true,
   oa_codes: [],
+  indicator_refs: [],
   provider: 'auto',
+};
+
+// Tope duro del backend para indicadores marcados a mano (curriculum_context.MAX_INDICADORES_SELECCION).
+// Se replica aquí solo para avisar en la UI antes de generar; el backend es la fuente de verdad.
+const MAX_INDICADORES_SELECCION = 12;
+
+// Sugerencias curadas por tipo de documento, pensadas para 1°-2° básico. Solo acumulan
+// texto en el textarea de instrucciones: la profesora sigue pudiendo editarlo a mano.
+const INSTRUCTION_CHIPS: Record<DocType, string[]> = {
+  prueba: [
+    'alternativas con solo una opción claramente correcta',
+    'preguntas cortas, una idea por enunciado',
+    'sin dobles negativos ni trampas de lectura',
+    'incluir 1 pregunta de aplicación, no solo memoria',
+    'vocabulario simple, apto para lectura inicial',
+  ],
+  evaluacion: [
+    'rúbrica simple de 3 niveles para las preguntas abiertas',
+    'graduar las preguntas de fácil a difícil',
+    'criterios de logro visibles para el alumno',
+    'combinar selección múltiple con una pregunta de desarrollo corta',
+    'contextualizar las preguntas con situaciones cotidianas',
+  ],
+  guia: [
+    'actividades graduadas de menor a mayor dificultad',
+    'un ejemplo resuelto antes de cada bloque',
+    'instrucciones de máximo una línea',
+    'apoyo visual en cada actividad',
+    'cierre metacognitivo simple',
+  ],
+  planificacion: [
+    'inicio breve que active conocimientos previos',
+    'actividades con tiempo estimado por momento',
+    'adecuaciones para ritmos de aprendizaje distintos',
+    'cierre con una pregunta de verificación oral',
+    'materiales concretos y manipulables, no solo pizarra',
+  ],
+  ficha: [
+    'una actividad por página, con espacio amplio para responder',
+    'consignas con verbos simples: marca, encierra, dibuja',
+    'incluir un ejemplo ya resuelto',
+    'actividades autocorregibles cuando sea posible',
+    'letra grande y espaciado amplio para motricidad fina',
+  ],
 };
 
 const selectClass =
@@ -131,18 +178,46 @@ export default function AIConstructor() {
       .then(r => { if (!cancelled) setOaList(r.data.oa || []); })
       .catch(() => { if (!cancelled) setOaList([]); })
       .finally(() => { if (!cancelled) setLoadingOa(false); });
-    // Cambiar de nivel o asignatura invalida los OA marcados: pertenecen al par anterior.
-    setForm(f => (f.oa_codes.length ? { ...f, oa_codes: [] } : f));
+    // Cambiar de nivel o asignatura invalida los OA e indicadores marcados: pertenecen al par anterior.
+    setForm(f => (f.oa_codes.length ? { ...f, oa_codes: [], indicator_refs: [] } : f));
     return () => { cancelled = true; };
   }, [form.grade_level, form.subject]);
 
   const toggleOa = (code: string) =>
+    setForm(f => {
+      const selected = f.oa_codes.includes(code);
+      return {
+        ...f,
+        oa_codes: selected ? f.oa_codes.filter(c => c !== code) : [...f.oa_codes, code],
+        // Al deseleccionar el OA, sus indicadores marcados dejan de tener sentido.
+        indicator_refs: selected ? f.indicator_refs.filter(r => !r.startsWith(`${code}:`)) : f.indicator_refs,
+      };
+    });
+
+  const toggleIndicator = (ref: string) =>
     setForm(f => ({
       ...f,
-      oa_codes: f.oa_codes.includes(code)
-        ? f.oa_codes.filter(c => c !== code)
-        : [...f.oa_codes, code],
+      indicator_refs: f.indicator_refs.includes(ref)
+        ? f.indicator_refs.filter(r => r !== ref)
+        : [...f.indicator_refs, ref],
     }));
+
+  const markFirstSix = (oa: CurriculumOA) =>
+    setForm(f => ({
+      ...f,
+      indicator_refs: [
+        ...f.indicator_refs.filter(r => !r.startsWith(`${oa.code}:`)),
+        ...oa.indicators.slice(0, 6).map(ind => `${oa.code}:${ind.ordinal}`),
+      ],
+    }));
+
+  const addInstructionChip = (chip: string) =>
+    setForm(f => {
+      const current = f.instructions.trim();
+      if (!current) return { ...f, instructions: chip };
+      const sep = current.endsWith('.') ? ' ' : '. ';
+      return { ...f, instructions: `${current}${sep}${chip}` };
+    });
 
   // Vuelve al inicio del panel scrolleable tanto al mostrar el resultado como al volver al formulario.
   useEffect(() => {
@@ -167,6 +242,7 @@ export default function AIConstructor() {
         topic: form.topic,
         // Sin esto el optimizador trabaja a ciegas respecto del objetivo elegido.
         oa_codes: form.oa_codes,
+        indicator_refs: form.indicator_refs,
       });
       setForm(f => ({ ...f, instructions: res.data.optimized }));
       toast.success('Instrucciones optimizadas ✨');
@@ -362,6 +438,13 @@ export default function AIConstructor() {
         : 'Con tu propia API Key',
   }));
 
+  // Resuelve indicator_ref ("OA11:3") al texto oficial usando el currículum ya cargado
+  // en oaList, para no mostrarle a la profesora un código crudo en el documento.
+  const indicatorLookup: Record<string, string> = {};
+  oaList.forEach(oa => oa.indicators.forEach(ind => {
+    indicatorLookup[`${oa.code}:${ind.ordinal}`] = ind.text;
+  }));
+
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
       <PageHeader
@@ -480,6 +563,79 @@ export default function AIConstructor() {
                   </p>
                 </div>
               )}
+
+              {/* Indicadores de Evaluación por cada OA seleccionado */}
+              {form.oa_codes.length > 0 && (
+                <div className="space-y-3">
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block">
+                    Indicadores de Evaluación (opcional)
+                  </label>
+                  {oaList.filter(oa => form.oa_codes.includes(oa.code)).map(oa => {
+                    const selectedRefs = form.indicator_refs.filter(r => r.startsWith(`${oa.code}:`));
+                    return (
+                      <div key={oa.code} className="rounded-xl border border-gray-200 dark:border-gray-600 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-xs font-semibold text-primary-700 dark:text-primary-400">{oa.code}</span>
+                          {oa.indicators.length > 0 && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-400 dark:text-gray-500">
+                                {selectedRefs.length} de {oa.indicators.length} marcados
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => markFirstSix(oa)}
+                                className="text-xs text-primary-600 dark:text-primary-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+                              >
+                                Marcar los primeros 6
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {oa.indicators.length === 0 ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                            Este OA no tiene indicadores en su Programa de Estudio; la IA se guiará solo por el enunciado.
+                          </p>
+                        ) : (
+                          <>
+                            <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-100 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
+                              {oa.indicators.map(ind => {
+                                const ref = `${oa.code}:${ind.ordinal}`;
+                                const checked = form.indicator_refs.includes(ref);
+                                return (
+                                  <label
+                                    key={ref}
+                                    className={`flex gap-2 p-2 cursor-pointer transition-colors ${
+                                      checked ? 'bg-primary-50 dark:bg-primary-900/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleIndicator(ref)}
+                                      className="w-3.5 h-3.5 rounded mt-0.5 shrink-0"
+                                    />
+                                    <span className="text-xs text-gray-600 dark:text-gray-400">{ind.text}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            {selectedRefs.length > MAX_INDICADORES_SELECCION && (
+                              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                                Se usarán solo los primeros {MAX_INDICADORES_SELECCION} (de {selectedRefs.length} marcados).
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <p className="text-xs text-gray-400 dark:text-gray-500">
+                    Sin marcar ninguno, la IA elige automáticamente hasta 6 indicadores por OA.
+                  </p>
+                </div>
+              )}
+
               {loadingOa && oaList.length === 0 && (
                 <p className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
                   <ArrowPathIcon className="w-3 h-3 animate-spin" /> Buscando objetivos del currículum...
@@ -520,6 +676,18 @@ export default function AIConstructor() {
                       ? <><ArrowPathIcon className="w-3 h-3 animate-spin" /> Optimizando...</>
                       : <><SparklesIcon className="w-3 h-3" /> Optimizar con IA</>}
                   </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {INSTRUCTION_CHIPS[form.doc_type].map(chip => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => addInstructionChip(chip)}
+                      className="text-xs px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-primary-400 hover:text-primary-700 dark:hover:text-primary-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                    >
+                      + {chip}
+                    </button>
+                  ))}
                 </div>
                 <textarea
                   id="ac-instructions"
@@ -734,6 +902,7 @@ export default function AIConstructor() {
                 imageLoading={imageLoading}
                 activityImages={activityImages}
                 activityImagesLoading={loadingActivityImages}
+                indicatorLookup={indicatorLookup}
                 showStudentRow
               />
             </div>

@@ -73,6 +73,7 @@ interface SectionProps {
   section: any;
   activityImages: Record<string, string>;
   activityImagesLoading?: boolean;
+  indicatorLookup?: Record<string, string>;
 }
 
 /**
@@ -91,7 +92,7 @@ function readSection(section: any): { body: string; items: any[] } {
   return { body: typeof legacy === 'string' ? legacy : '', items: [] };
 }
 
-function Section({ section, activityImages, activityImagesLoading }: SectionProps) {
+function Section({ section, activityImages, activityImagesLoading, indicatorLookup }: SectionProps) {
   const { body, items } = readSection(section);
   return (
     <div className="mb-6">
@@ -101,6 +102,9 @@ function Section({ section, activityImages, activityImagesLoading }: SectionProp
       {body && <p className="text-sm text-gray-900 whitespace-pre-line mb-3">{renderInline(body)}</p>}
       {items.map((item: any, i: number) => {
         const imgWords = getItemImageWords(item);
+        const purpose = typeof item === 'object' && item?.purpose ? String(item.purpose).trim() : '';
+        const indicatorRef = typeof item === 'object' && item?.indicator_ref ? String(item.indicator_ref).trim() : '';
+        const indicatorText = indicatorRef ? indicatorLookup?.[indicatorRef.toUpperCase()] : '';
         return (
           <div key={i} className="mb-3">
             {typeof item === 'string' ? (
@@ -109,11 +113,19 @@ function Section({ section, activityImages, activityImagesLoading }: SectionProp
               </p>
             ) : (
               <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                {purpose && (
+                  <p className="text-xs italic text-gray-500 mb-1">Propósito: {purpose}</p>
+                )}
                 <p className="text-sm font-medium text-gray-900">
                   {item.number || i + 1}. {renderInline(getItemText(item))}
                   {item.points > 0 && <span className="ml-2 text-xs text-gray-600">({item.points} pts)</span>}
                 </p>
                 <ImageGrid words={imgWords} activityImages={activityImages} loading={activityImagesLoading} />
+                {indicatorRef && (
+                  <p className="mt-2 inline-block text-xs text-primary-700 bg-primary-50 rounded-full px-2 py-0.5 border border-primary-200">
+                    Indicador: {indicatorText || indicatorRef}
+                  </p>
+                )}
                 {item.options?.length > 0 && (
                   <ul className="mt-2 space-y-1 ml-4">
                     {item.options.map((opt: string, j: number) => (
@@ -140,6 +152,8 @@ interface DocumentPreviewProps {
   imageLoading?: boolean;
   activityImages?: Record<string, string>;
   activityImagesLoading?: boolean;
+  /** "CODIGO:ordinal" -> texto oficial del indicador, para resolver indicator_ref en las actividades de guía. */
+  indicatorLookup?: Record<string, string>;
   showStudentRow?: boolean;
   className?: string;
   /** Skip the white card chrome (border/shadow/padding) when already inside another container, e.g. a dialog. */
@@ -153,6 +167,7 @@ export default function DocumentPreview({
   imageLoading,
   activityImages = {},
   activityImagesLoading,
+  indicatorLookup,
   showStudentRow = false,
   className = '',
   bare = false,
@@ -222,7 +237,13 @@ export default function DocumentPreview({
       )}
 
       {content.sections?.map((section: any, idx: number) => (
-        <Section key={idx} section={section} activityImages={activityImages} activityImagesLoading={activityImagesLoading} />
+        <Section
+          key={idx}
+          section={section}
+          activityImages={activityImages}
+          activityImagesLoading={activityImagesLoading}
+          indicatorLookup={indicatorLookup}
+        />
       ))}
     </div>
   );

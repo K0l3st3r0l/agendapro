@@ -41,6 +41,10 @@ export interface ContentItem {
   points: number;
   image_words: string[];
   image_style: 'none' | 'photo' | 'coloring';
+  /** Propósito pedagógico de la actividad. Vacío si no aplica (solo guías). */
+  purpose?: string;
+  /** Referencia "CODIGO:ordinal" del indicador que trabaja. Vacío si no aplica. */
+  indicator_ref?: string;
 }
 
 export interface ContentSection {
@@ -71,9 +75,16 @@ export interface DocumentContent {
   };
 }
 
+export interface CurriculumIndicator {
+  text: string;
+  ordinal: number;
+  source: string;
+}
+
 export interface CurriculumOA {
   code: string;
   description: string;
+  indicators: CurriculumIndicator[];
 }
 
 export interface Document {

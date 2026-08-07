@@ -75,6 +75,8 @@ def _coerce_item(raw: Any) -> ContentItem:
         points=_as_int(raw.get("points")),
         image_words=words,
         image_style=style,
+        purpose=str(raw.get("purpose") or "").strip(),
+        indicator_ref=str(raw.get("indicator_ref") or "").strip(),
     )
 
 

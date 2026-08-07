@@ -36,6 +36,21 @@ class ContentItem(BaseModel):
         ),
     )
     image_style: ImageStyle = Field("none", description="'coloring' si la actividad pide pintar o colorear.")
+    purpose: str = Field(
+        "",
+        description=(
+            "Propósito pedagógico de la actividad: qué habilidad ejercita y por qué, en una "
+            "frase breve. Solo para type='activity'. Vacío si no aplica."
+        ),
+    )
+    indicator_ref: str = Field(
+        "",
+        description=(
+            "Referencia EXACTA del indicador de evaluación que esta actividad trabaja, formato "
+            "'CODIGO:N' (ej. 'OA11:3'), copiada tal cual del bloque de currículum entregado. "
+            "Vacío si el OA no trae indicadores o el ítem no evalúa uno en particular."
+        ),
+    )
 
 
 class Section(BaseModel):

@@ -57,6 +57,7 @@ class GenerateRequest(BaseModel):
     include_images: bool = False
     include_answers: bool = True
     oa_codes: list[str] = Field(default_factory=list, max_length=20)
+    indicator_refs: list[str] = Field(default_factory=list, max_length=300)
     provider: Optional[str] = None  # openrouter | gemini | openai | xai | auto
 
 
@@ -83,6 +84,7 @@ class OptimizeRequest(BaseModel):
     grade_level: str = ""
     topic: str = ""
     oa_codes: list[str] = Field(default_factory=list, max_length=20)
+    indicator_refs: list[str] = Field(default_factory=list, max_length=300)
 
 
 class SearchImagesRequest(BaseModel):
@@ -118,14 +120,28 @@ def build_prompt(req: GenerateRequest, curriculum_block: str = "") -> str:
                 "cada ítem con su respuesta correcta y su puntaje."
             )
     elif req.doc_type == "guia":
-        parts.append(f"Incluye {req.num_questions} actividades o ejercicios con instrucciones claras.")
+        parts.append(
+            f"Estructura el documento en bloques de ACTIVIDADES (sections type='activities', ítems "
+            f"type='activity'), con {req.num_questions} actividades en total, graduadas de menor a "
+            "mayor dificultad. Esto NO es una prueba: no pongas alternativas ni puntajes salvo que las "
+            "instrucciones del docente lo pidan explícitamente."
+        )
+        parts.append(
+            "Cada actividad (ContentItem) llena tres campos propios además de 'text': 'purpose' con el "
+            "propósito pedagógico en una frase breve (qué habilidad ejercita y por qué); 'text' con la "
+            "instrucción para el estudiante, una frase simple y directa, apropiada a 1°-2° básico; e "
+            "'indicator_ref' con la referencia del indicador de evaluación que esa actividad trabaja, "
+            "copiada EXACTA (sin corchetes) desde el bloque de currículum de abajo — nunca inventada, y "
+            "vacía si el OA correspondiente no trae indicadores."
+        )
         parts.append(
             "ACTIVIDADES CON IMÁGENES: cuando una actividad requiera que el alumno observe dibujos, "
             "pon las palabras en el campo 'image_words' del ítem. Deben ser sustantivos concretos y "
             "fáciles de ilustrar (animales, objetos, frutas). Nunca uses una sola letra como palabra. "
             "El texto del ítem NO debe listar esas palabras ni describir las imágenes: nada de "
             "'Imagen de una abeja' ni viñetas con los dibujos. Si la actividad pide pintar o colorear, "
-            "marca image_style='coloring'."
+            "marca image_style='coloring'. Para 1° y 2° básico, casi toda actividad debería traer al "
+            "menos una palabra ilustrable: es el apoyo visual que distingue a la guía de una prueba."
         )
     elif req.doc_type == "planificacion":
         parts.append(
@@ -226,6 +242,26 @@ def _resolve_oa_codes(doc: DocumentContent, requested: list[str], allowed: set[s
     return invented
 
 
+def _resolve_indicator_refs(doc: DocumentContent, allowed: set[str]) -> list[str]:
+    """Descarta indicator_ref inventados: solo puede citar lo que el contexto trajo.
+
+    Igual criterio que `_resolve_oa_codes`: el indicador que ve la profesora en
+    el documento tiene que ser uno oficial de verdad, no algo que el modelo se
+    inventó al copiar el formato.
+    """
+    invented = []
+    for section in doc.sections:
+        for item in section.items:
+            if not item.indicator_ref:
+                continue
+            if item.indicator_ref.strip().upper() not in allowed:
+                invented.append(item.indicator_ref)
+                item.indicator_ref = ""
+    if invented:
+        logger.warning("El modelo devolvió indicator_ref inexistentes y se descartaron: %s", invented)
+    return invented
+
+
 @router.post("/generate")
 async def generate_document(
     req: GenerateRequest,
@@ -234,13 +270,16 @@ async def generate_document(
 ):
     settings = get_user_settings(current_user.id, db)
 
-    curriculum_block = curriculum_context.build_context(db, req.grade_level, req.subject, req.oa_codes)
-    prompt = build_prompt(req, curriculum_block)
+    ctx = curriculum_context.build_context(
+        db, req.grade_level, req.subject, req.oa_codes, req.indicator_refs
+    )
+    prompt = build_prompt(req, ctx.block)
 
     doc, result = await _generate_validated(settings, prompt, req.provider)
 
     allowed = curriculum_context.valid_codes(db, req.grade_level, req.subject)
     _resolve_oa_codes(doc, req.oa_codes, allowed)
+    _resolve_indicator_refs(doc, ctx.indicator_refs)
 
     if not doc.metadata.subject:
         doc.metadata.subject = req.subject
@@ -265,7 +304,7 @@ async def generate_document(
         "provider_used": result.provider,
         "model_used": result.model,
         "cost": result.cost,
-        "curriculum_grounded": bool(curriculum_block),
+        "curriculum_grounded": bool(ctx.block),
     }
 
 
@@ -336,8 +375,8 @@ async def optimize_instructions(
     curriculum_block = ""
     if data.oa_codes and data.grade_level and data.subject:
         curriculum_block = curriculum_context.build_context(
-            db, data.grade_level, data.subject, data.oa_codes
-        )
+            db, data.grade_level, data.subject, data.oa_codes, data.indicator_refs
+        ).block
 
     optimize_prompt = f"""Eres un experto en ingeniería de prompts y diseño instruccional.
 
