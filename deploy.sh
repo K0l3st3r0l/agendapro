@@ -4,6 +4,9 @@
 # ============================================================
 set -e
 
+source /root/apps/wiki/deploy-guard.sh
+deploy_guard_enter "agendapro/full" || exit $?
+
 echo "📅 Desplegando AgendaPro..."
 
 # Verificar que existe .env
