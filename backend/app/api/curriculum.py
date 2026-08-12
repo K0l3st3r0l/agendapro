@@ -54,12 +54,17 @@ def get_oa(
         "subject": subject,
         "oa": [
             {
+                # El `id` es la única identificación real: 'OA11' existe en cuatro
+                # asignaturas distintas de 1° Básico. Las clases visuales lo
+                # guardan en su spec para que cambiar la asignatura en el editor
+                # no re-apunte la clase a otro objetivo en silencio.
+                "id": r.id,
                 "code": r.code,
                 "description": r.description,
                 # Lista vacía cuando el Programa de Estudio no trae indicadores
                 # para ese OA: no se rellena con nada generado.
                 "indicators": [
-                    {"text": i.text, "ordinal": i.ordinal, "source": i.source}
+                    {"id": i.id, "text": i.text, "ordinal": i.ordinal, "source": i.source}
                     for i in indicadores.get(r.id, [])
                 ],
             }

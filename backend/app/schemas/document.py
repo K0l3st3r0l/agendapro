@@ -15,6 +15,8 @@ era lo que usaba el formato antiguo.
 from typing import List, Literal
 from pydantic import BaseModel, Field
 
+from app.schemas._jsonschema import gemini_schema_for, openai_schema_for
+
 SectionType = Literal["header", "text", "questions", "activities", "answers"]
 ItemType = Literal["multiple_choice", "true_false", "open", "matching", "activity"]
 ImageStyle = Literal["none", "photo", "coloring"]
@@ -84,83 +86,14 @@ class DocumentContent(BaseModel):
 # ---------------------------------------------------------------------------
 # Conversión a los formatos de esquema que espera cada proveedor
 # ---------------------------------------------------------------------------
-
-_UNSUPPORTED_BY_GEMINI = {"default", "title", "additionalProperties", "$defs", "allOf"}
-
-
-def _inline_refs(node, defs: dict):
-    """Resuelve los `$ref` que Pydantic genera para modelos anidados.
-
-    Gemini no acepta `$ref`/`$defs`, así que cada referencia se reemplaza por
-    una copia del modelo apuntado. El esquema no es recursivo, por lo que
-    inlinear no puede entrar en bucle.
-    """
-    if isinstance(node, list):
-        return [_inline_refs(n, defs) for n in node]
-    if not isinstance(node, dict):
-        return node
-
-    if "$ref" in node:
-        name = node["$ref"].rsplit("/", 1)[-1]
-        return _inline_refs(defs[name], defs)
-
-    # Pydantic envuelve los modelos anidados con default en allOf: [{$ref}]
-    if "allOf" in node and len(node["allOf"]) == 1:
-        merged = _inline_refs(node["allOf"][0], defs)
-        return merged
-
-    return {k: _inline_refs(v, defs) for k, v in node.items()}
-
-
-def _walk(node, transform):
-    """Recorre un JSON Schema aplicando `transform` a cada nodo de esquema.
-
-    Distingue las claves de `properties` —que son nombres de campo elegidos por
-    nosotros, como `title`— de las palabras clave de JSON Schema. Sin esa
-    distinción, filtrar la keyword `title` borraba también la propiedad
-    `title` del documento.
-    """
-    if isinstance(node, list):
-        return [_walk(n, transform) for n in node]
-    if not isinstance(node, dict):
-        return node
-
-    out = {}
-    for key, value in node.items():
-        if key == "properties" and isinstance(value, dict):
-            out[key] = {name: _walk(sub, transform) for name, sub in value.items()}
-        else:
-            out[key] = _walk(value, transform)
-    return transform(out)
-
-
-def _inlined_root() -> dict:
-    raw = DocumentContent.model_json_schema()
-    defs = raw.get("$defs", {})
-    return _inline_refs({k: v for k, v in raw.items() if k != "$defs"}, defs)
+# La lógica vive en `_jsonschema.py` desde que `lesson.py` necesitó lo mismo.
+# Estas dos funciones se mantienen sin argumentos porque son las que usa el
+# Constructor en producción.
 
 
 def gemini_schema() -> dict:
-    """Esquema sin `$ref`, `default` ni `additionalProperties`."""
-
-    def prune(node: dict) -> dict:
-        return {k: v for k, v in node.items() if k not in _UNSUPPORTED_BY_GEMINI}
-
-    return _walk(_inlined_root(), prune)
+    return gemini_schema_for(DocumentContent)
 
 
 def openai_schema() -> dict:
-    """Esquema para `response_format={"type":"json_schema", strict: true}`.
-
-    El modo estricto exige `additionalProperties: false` y que `required`
-    liste *todas* las propiedades de cada objeto.
-    """
-
-    def strictify(node: dict) -> dict:
-        out = {k: v for k, v in node.items() if k not in {"default", "$defs"}}
-        if out.get("type") == "object" and "properties" in out:
-            out["additionalProperties"] = False
-            out["required"] = list(out["properties"].keys())
-        return out
-
-    return _walk(_inlined_root(), strictify)
+    return openai_schema_for(DocumentContent)

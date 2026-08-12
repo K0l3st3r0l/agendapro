@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from fastapi import HTTPException
 
 from app.api.settings import AISettings
-from app.schemas.document import gemini_schema, openai_schema
+from app.schemas.document import gemini_schema as documento_gemini_schema
+from app.schemas.document import openai_schema as documento_openai_schema
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,19 @@ OPENROUTER_HEADERS = {
     "HTTP-Referer": "https://agendapro.laravas.com",
     "X-Title": "AgendaPro",
 }
+
+class InvalidJSONError(HTTPException):
+    """El proveedor devolvió algo que no parsea como JSON.
+
+    Es una `HTTPException` 502 —así el Constructor la sigue propagando igual que
+    antes— pero con tipo propio para que quien quiera reintentar pueda
+    distinguirla de un 402 sin créditos o un 401 de clave inválida, donde
+    reintentar solo gasta tiempo y plata.
+    """
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=502, detail=detail)
+
 
 PROVIDER_LABELS = {
     "openrouter": "OpenRouter",
@@ -45,6 +59,10 @@ class GenerationResult:
     provider: str = ""
     model: str = ""
     cost: float = 0.0
+    # 'length' significa que se acabó `max_tokens` a mitad de la respuesta: el
+    # JSON queda cortado y no parsea. Sin este dato, ese caso es indistinguible
+    # de un modelo que devolvió basura, y se diagnostica mal.
+    finish_reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +142,7 @@ async def _chat_completion(
     schema: dict | None,
     max_tokens: int,
     temperature: float,
+    schema_name: str = "documento_educativo",
 ) -> GenerationResult:
     client = _openai_compatible_client(api_key, base_url)
 
@@ -136,7 +155,7 @@ async def _chat_completion(
     if schema is not None:
         request["response_format"] = {
             "type": "json_schema",
-            "json_schema": {"name": "documento_educativo", "strict": True, "schema": schema},
+            "json_schema": {"name": schema_name, "strict": True, "schema": schema},
         }
 
     extra_headers = OPENROUTER_HEADERS if provider == "openrouter" else None
@@ -152,11 +171,18 @@ async def _chat_completion(
     except Exception as exc:
         raise _fail(provider, model, exc) from exc
 
-    text = (response.choices[0].message.content or "").strip()
+    choice = response.choices[0]
+    text = (choice.message.content or "").strip()
     usage = getattr(response, "usage", None)
     cost = float(getattr(usage, "cost", 0.0) or 0.0) if usage else 0.0
 
-    return GenerationResult(text=text, provider=provider, model=model, cost=cost)
+    return GenerationResult(
+        text=text,
+        provider=provider,
+        model=model,
+        cost=cost,
+        finish_reason=getattr(choice, "finish_reason", "") or "",
+    )
 
 
 async def _gemini_generate(
@@ -207,10 +233,25 @@ async def generate_json(
     provider: str | None = None,
     max_tokens: int = 8000,
     temperature: float = 0.7,
+    gemini_schema=documento_gemini_schema,
+    openai_schema=documento_openai_schema,
+    schema_name: str = "documento_educativo",
+    openrouter_model: str = "",
 ) -> GenerationResult:
-    """Genera un documento estructurado validado contra el esquema canónico."""
+    """Genera JSON estructurado validado contra un esquema.
+
+    El esquema llega por parámetro desde que las clases visuales necesitan uno
+    propio; los defaults son los del Constructor para no tocar su llamada.
+
+    `openrouter_model` fuerza un modelo distinto al configurado, y solo cuando
+    la llamada sale por OpenRouter. Existe porque las clases visuales tienen un
+    presupuesto de latencia que el modelo por defecto no cumple; si la profesora
+    usa un proveedor directo, manda su configuración.
+    """
     chosen = resolve_provider(settings, provider)
     model = settings.model_for(chosen)
+    if openrouter_model and chosen == "openrouter":
+        model = openrouter_model
     key = settings.key_for(chosen)
 
     if chosen == "gemini":
@@ -233,6 +274,7 @@ async def generate_json(
             system=system,
             prompt=prompt,
             schema=openai_schema(),
+            schema_name=schema_name,
             max_tokens=max_tokens,
             temperature=temperature,
         )
@@ -240,10 +282,15 @@ async def generate_json(
     try:
         result.content = json.loads(result.text)
     except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"{PROVIDER_LABELS.get(chosen, chosen)} devolvió una respuesta que no es JSON válido.",
-        ) from exc
+        label = PROVIDER_LABELS.get(chosen, chosen)
+        if result.finish_reason == "length":
+            detalle = (
+                f"{label} se quedó sin espacio a mitad de la respuesta (max_tokens={max_tokens}) "
+                f"y el JSON quedó cortado. Pide un contenido más corto o sube el límite."
+            )
+        else:
+            detalle = f"{label} devolvió una respuesta que no es JSON válido."
+        raise InvalidJSONError(detalle) from exc
 
     return result
 

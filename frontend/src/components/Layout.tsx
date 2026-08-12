@@ -8,6 +8,7 @@ import {
   BookOpenIcon,
   ArrowRightOnRectangleIcon,
   SparklesIcon,
+  PresentationChartLineIcon,
   Cog6ToothIcon,
   Bars3Icon,
   XMarkIcon,
@@ -18,6 +19,7 @@ import {
 const navItems = [
   { to: '/calendario',    icon: CalendarDaysIcon, label: 'Calendario' },
   { to: '/constructor',   icon: SparklesIcon,     label: 'Constructor IA' },
+  { to: '/clases',        icon: PresentationChartLineIcon, label: 'Clases visuales' },
   { to: '/documentos',    icon: BookOpenIcon,     label: 'Mis Documentos' },
   { to: '/configuracion', icon: Cog6ToothIcon,    label: 'Configuración' },
 ];

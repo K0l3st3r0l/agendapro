@@ -61,6 +61,19 @@ export const constructorAPI = {
   deleteDocument: (id: number) => api.delete(`/constructor/documents/${id}`),
 };
 
+// Clases visuales
+export const lessonsAPI = {
+  // La generación tarda entre 15 y 40 s según el proveedor; el techo de nginx
+  // son 300 s y no conviene cortar antes de tiempo un storyboard que va a llegar.
+  storyboard: (data: object) => api.post('/lessons/storyboard', data, { timeout: 180000 }),
+  create: (data: object) => api.post('/lessons', data),
+  list: () => api.get('/lessons'),
+  get: (id: number) => api.get(`/lessons/${id}`),
+  present: (id: number) => api.get(`/lessons/${id}/present`),
+  update: (id: number, data: object) => api.put(`/lessons/${id}`, data),
+  remove: (id: number) => api.delete(`/lessons/${id}`),
+};
+
 // Currículum MINEDUC
 export const curriculumAPI = {
   getLevels: () => api.get('/curriculum/levels'),

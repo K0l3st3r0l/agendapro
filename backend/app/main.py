@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.database import engine, Base
-from app.api import auth, curriculum, events, ai_constructor, settings
+from app.api import auth, curriculum, events, ai_constructor, lessons, settings
 import app.models  # noqa - ensure all models are registered
 import os
 
@@ -29,6 +29,7 @@ app.include_router(events.router)
 app.include_router(ai_constructor.router)
 app.include_router(settings.router)
 app.include_router(curriculum.router)
+app.include_router(lessons.router)
 
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 

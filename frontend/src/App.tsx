@@ -12,6 +12,9 @@ const CalendarPage = lazy(() => import('./pages/CalendarPage'));
 const AIConstructor = lazy(() => import('./pages/AIConstructor'));
 const Documents = lazy(() => import('./pages/Documents'));
 const Settings = lazy(() => import('./pages/Settings'));
+const LessonPresenter = lazy(() => import('./pages/LessonPresenter'));
+const Lessons = lazy(() => import('./pages/Lessons'));
+const LessonBuilder = lazy(() => import('./pages/LessonBuilder'));
 
 const PageFallback = () => (
   <div className="flex items-center justify-center h-full py-24">
@@ -61,8 +64,17 @@ function App() {
                 <Route path="calendario" element={<CalendarPage />} />
                 <Route path="constructor" element={<AIConstructor />} />
                 <Route path="documentos" element={<Documents />} />
+                <Route path="clases" element={<Lessons />} />
+                <Route path="clases/nueva" element={<LessonBuilder />} />
+                <Route path="clases/:id/editar" element={<LessonBuilder />} />
                 <Route path="configuracion" element={<Settings />} />
               </Route>
+              {/* Fuera del <Layout /> a propósito: sobre el proyector no puede
+                  haber sidebar ni encabezado de la app. Sigue protegida. */}
+              <Route
+                path="/clases/:id/presentar"
+                element={<ProtectedRoute><LessonPresenter /></ProtectedRoute>}
+              />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>

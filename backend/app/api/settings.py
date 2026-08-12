@@ -16,7 +16,13 @@ from app.utils.auth import get_current_user
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 DEFAULT_TEXT_MODEL = "deepseek/deepseek-v4-flash"
-DEFAULT_IMAGE_MODEL = "openai/gpt-image-2"
+# `openai/gpt-image-2` ganó el benchmark del 2026-08-06 pero desapareció del
+# catálogo de OpenRouter (verificado el 2026-08-11: la API no lo lista). Dejarlo
+# como default significaba que la última red de seguridad de la cadena de
+# imágenes fallaba siempre, enmascarada por las capas anteriores.
+# FLUX.2 Pro lo reemplaza: ya estaba implementado como capa 3b y probado en el
+# mismo comparativo, sin el texto inventado que descartó a klein-4b.
+DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.2-pro"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_XAI_MODEL = "grok-3-mini"

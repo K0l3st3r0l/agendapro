@@ -18,6 +18,13 @@ export default defineConfig({
       '/api': {
         target: 'http://backend:8000',
         changeOrigin: true,
+      },
+      // Las imágenes generadas se sirven desde el backend. Sin este proxy,
+      // en desarrollo salían rotas: nginx sí las rutea en producción
+      // (frontend/nginx.conf), pero el dev server no lo hacía.
+      '/static': {
+        target: 'http://backend:8000',
+        changeOrigin: true,
       }
     }
   }

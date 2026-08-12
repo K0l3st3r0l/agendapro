@@ -1,0 +1,296 @@
+{
+  "schema_version": "1.0",
+  "spec_type": "lesson",
+  "curriculum": {
+    "grade_level": "1° Básico",
+    "subject": "Matemática",
+    "unit": "Patrones",
+    "oa_refs": ["OA11"],
+    "indicator_refs": ["OA11:3", "OA11:4"],
+    "resolved_oas": [
+      {
+        "oa_id": 19,
+        "code": "OA11",
+        "text": "Reconocer, describir, crear y continuar patrones repetitivos (sonidos, figuras, ritmos...) y patrones numéricos hasta el 20, crecientes y decrecientes, usando material concreto, pictórico y simbólico, de manera manual y/o por medio de software educativo."
+      }
+    ],
+    "resolved_indicators": [
+      {
+        "indicator_id": 5187,
+        "ref": "OA11:3",
+        "oa_code": "OA11",
+        "ordinal": 3,
+        "text": "Extienden patrones de manera concreta.",
+        "source_ref": "programa_matematica_1basico.pdf#p55"
+      },
+      {
+        "indicator_id": 5188,
+        "ref": "OA11:4",
+        "oa_code": "OA11",
+        "ordinal": 4,
+        "text": "Identifican los elementos que faltan en un patrón repetitivo.",
+        "source_ref": "programa_matematica_1basico.pdf#p55"
+      }
+    ]
+  },
+  "metadata": {
+    "title": "Los patrones se repiten",
+    "topic": "Patrones repetitivos con figuras",
+    "lesson_kind": "introduction"
+  },
+  "duration_minutes": 45,
+  "audience": "1° Básico",
+  "assets": [
+    {
+      "id": "a-patron",
+      "kind": "svg_diagram",
+      "role": "concepto",
+      "query": "círculos de colores",
+      "style": "none",
+      "alt": "Patrón alternado de círculo rojo y círculo azul",
+      "uri": "",
+      "source": "generated",
+      "status": "pending",
+      "credit": "",
+      "fallback": "static_diagram"
+    },
+    {
+      "id": "a-collar",
+      "kind": "image",
+      "role": "ejemplo",
+      "query": "collar de cuentas",
+      "style": "photo",
+      "alt": "Collar con cuentas de colores que se repiten",
+      "uri": "",
+      "source": "generated",
+      "status": "pending",
+      "credit": "",
+      "fallback": "alt_text"
+    },
+    {
+      "id": "a-azul",
+      "kind": "icon",
+      "role": "alternativa",
+      "query": "círculo azul",
+      "style": "none",
+      "alt": "Círculo azul",
+      "uri": "",
+      "source": "generated",
+      "status": "pending",
+      "credit": "",
+      "fallback": "label"
+    },
+    {
+      "id": "a-rojo",
+      "kind": "icon",
+      "role": "alternativa",
+      "query": "círculo rojo",
+      "style": "none",
+      "alt": "Círculo rojo",
+      "uri": "",
+      "source": "generated",
+      "status": "pending",
+      "credit": "",
+      "fallback": "label"
+    },
+    {
+      "id": "a-verde",
+      "kind": "icon",
+      "role": "alternativa",
+      "query": "círculo verde",
+      "style": "none",
+      "alt": "Círculo verde",
+      "uri": "",
+      "source": "generated",
+      "status": "pending",
+      "credit": "",
+      "fallback": "label"
+    }
+  ],
+  "motion_defaults": {
+    "enabled": true,
+    "preset": "gentle-reveal",
+    "max_duration_ms": 1200
+  },
+  "scenes": [
+    {
+      "id": "s-concepto",
+      "type": "concept",
+      "title": "¿Qué es un patrón?",
+      "body": "Un patrón es un orden que se repite.",
+      "narration": "Miren la pantalla. Primero viene un círculo rojo, después uno azul, y otra vez rojo y azul. Eso que se repite una y otra vez se llama patrón. Los patrones están en la música cuando aplaudimos, en las baldosas del piso y en muchos lugares más.",
+      "duration_seconds": 90,
+      "asset_ids": ["a-patron"],
+      "motion": {"preset": "gentle-reveal", "duration_ms": 600, "stagger_ms": 100},
+      "data": {
+        "goal": "Reconocer y continuar patrones que se repiten.",
+        "examples": [],
+        "steps": [],
+        "question_ref": "",
+        "key_points": [],
+        "prompt": "¿Qué figura se repite?"
+      },
+      "teacher_note": "Antes de empezar, marca el ritmo con dos palmas y un golpe en la mesa para que escuchen un patrón."
+    },
+    {
+      "id": "s-ejemplo",
+      "type": "example",
+      "title": "Patrones en tu día",
+      "body": "Los patrones están en todas partes.",
+      "narration": "¿Se han fijado en un collar de cuentas? Muchas veces los colores se van repitiendo en el mismo orden. Lo mismo pasa con los días de la semana: siempre vienen en el mismo orden y vuelven a empezar.",
+      "duration_seconds": 90,
+      "asset_ids": ["a-collar"],
+      "motion": {"preset": "gentle-reveal", "duration_ms": 600, "stagger_ms": 150},
+      "data": {
+        "goal": "",
+        "examples": [
+          {
+            "id": "e-collar",
+            "label": "El collar",
+            "text": "Una cuenta roja, una azul, una roja, una azul.",
+            "asset_ids": ["a-collar"]
+          },
+          {
+            "id": "e-semana",
+            "label": "La semana",
+            "text": "Después del domingo siempre vuelve el lunes.",
+            "asset_ids": []
+          }
+        ],
+        "steps": [],
+        "question_ref": "",
+        "key_points": [],
+        "prompt": "¿Dónde más ves patrones?"
+      },
+      "teacher_note": ""
+    },
+    {
+      "id": "s-proceso",
+      "type": "process",
+      "title": "Cómo seguir un patrón",
+      "body": "Busca lo que se repite y sigue el orden.",
+      "narration": "Para continuar un patrón hacemos tres cosas. Primero miramos con atención todas las figuras. Después buscamos el grupo que se repite. Y por último agregamos la figura que viene.",
+      "duration_seconds": 150,
+      "asset_ids": ["a-patron"],
+      "motion": {"preset": "step-by-step", "duration_ms": 900, "stagger_ms": 250},
+      "data": {
+        "goal": "",
+        "examples": [],
+        "steps": [
+          {
+            "id": "p-1",
+            "label": "Observa",
+            "description": "Mira todas las figuras de la fila.",
+            "asset_ids": ["a-patron"]
+          },
+          {
+            "id": "p-2",
+            "label": "Encuentra",
+            "description": "Busca el grupo de figuras que se repite.",
+            "asset_ids": []
+          },
+          {
+            "id": "p-3",
+            "label": "Continúa",
+            "description": "Agrega la figura que viene después.",
+            "asset_ids": []
+          }
+        ],
+        "question_ref": "",
+        "key_points": [],
+        "prompt": ""
+      },
+      "teacher_note": "Reparte los círculos de cartulina y pide que armen el patrón en la mesa antes de mostrar el paso 3."
+    },
+    {
+      "id": "s-quiz",
+      "type": "quiz",
+      "title": "¿Qué sigue?",
+      "body": "Elige la figura que continúa.",
+      "narration": "Ahora les toca a ustedes. Miren bien la fila y piensen en silencio cuál viene después. No respondan todavía.",
+      "duration_seconds": 120,
+      "asset_ids": ["a-patron"],
+      "motion": {"preset": "answer-reveal", "duration_ms": 700, "stagger_ms": 0},
+      "data": {
+        "goal": "",
+        "examples": [],
+        "steps": [],
+        "question_ref": "q-sigue",
+        "key_points": [],
+        "prompt": ""
+      },
+      "teacher_note": "Escucha dos explicaciones distintas antes de revelar la respuesta."
+    },
+    {
+      "id": "s-cierre",
+      "type": "recap",
+      "title": "Lo que aprendimos",
+      "body": "Un patrón repite siempre el mismo orden.",
+      "narration": "Hoy aprendimos que un patrón es un orden que se repite, y que si encontramos la parte que se repite podemos saber qué viene después.",
+      "duration_seconds": 90,
+      "asset_ids": [],
+      "motion": {"preset": "gentle-reveal", "duration_ms": 500, "stagger_ms": 150},
+      "data": {
+        "goal": "",
+        "examples": [],
+        "steps": [],
+        "question_ref": "",
+        "key_points": [
+          "Un patrón tiene un orden.",
+          "El orden se repite igual.",
+          "Así sabemos qué sigue."
+        ],
+        "prompt": "Cuéntame cómo seguirías un patrón."
+      },
+      "teacher_note": ""
+    }
+  ],
+  "questions": [
+    {
+      "id": "q-sigue",
+      "kind": "single_choice",
+      "prompt": "Rojo, azul, rojo. ¿Qué sigue?",
+      "options": [
+        {"id": "o-azul", "label": "Azul", "asset_id": "a-azul"},
+        {"id": "o-rojo", "label": "Rojo", "asset_id": "a-rojo"},
+        {"id": "o-verde", "label": "Verde", "asset_id": "a-verde"}
+      ],
+      "correct_option_ids": ["o-azul"],
+      "explanation": "El grupo rojo-azul se repite, así que después del rojo viene el azul.",
+      "feedback_correct": "¡Muy bien! Encontraste la repetición.",
+      "feedback_incorrect": "Mira otra vez: rojo, azul, rojo…"
+    }
+  ],
+  "teacher_notes": {
+    "before_class": "Preparar círculos de cartulina rojos y azules, dos por niño.",
+    "during_class": "Pedir que digan en voz alta qué parte se repite antes de continuar el patrón.",
+    "after_class": ""
+  },
+  "exit_assessment": {
+    "enabled": true,
+    "prompt": "Arma un patrón con tus círculos y cuéntame qué viene después.",
+    "response_mode": "oral",
+    "expected_evidence": "Continúa correctamente una unidad que se repite y explica por qué.",
+    "rubric": [
+      {"level": "logrado", "evidence": "Continúa el patrón y explica la repetición."},
+      {"level": "en proceso", "evidence": "Continúa el patrón pero no logra explicarlo."}
+    ]
+  },
+  "accessibility": {
+    "language": "es-CL",
+    "alt_text_required": true,
+    "announce_scene_changes": true,
+    "keyboard": true,
+    "touch": true,
+    "reduced_motion": "respect"
+  },
+  "fallbacks": {
+    "missing_asset": "show_alt_text",
+    "unsupported_motion": "show_final_state",
+    "unsupported_scene": "render_text_card"
+  },
+  "privacy": {
+    "student_data_allowed": false,
+    "response_storage": "none"
+  }
+}

@@ -65,10 +65,12 @@ import base64
 import hashlib
 import logging
 import os
+import unicodedata
 
 import httpx
 
 from app.api.settings import AISettings
+from app.services import shapes
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +83,8 @@ PUBLIC_PREFIX = "/static/images"
 MAX_CONCURRENT = 4
 REQUEST_TIMEOUT = 120.0
 
-# Costo medido de openai/gpt-image-2, solo para reportar el gasto en los logs.
-COSTO_ESTIMADO_IA = 0.018
+# Costo medido de FLUX.2 Pro, solo para reportar el gasto en los logs.
+COSTO_ESTIMADO_IA = 0.03
 
 # Respaldo intermedio cuando el puente de Codex falla o no está configurado.
 # Ganó el comparativo del 2026-08-06 a Qwen Image 3 Pro, Seedream 4.5 y Grok
@@ -103,6 +105,7 @@ BRIDGE_URL = os.getenv("AGENT_BRIDGE_URL", "")
 BRIDGE_TOKEN = os.getenv("AGENT_BRIDGE_TOKEN", "")
 BRIDGE_TIMEOUT = 300.0
 
+FUENTE_FIGURA = "figura"
 FUENTE_ARASAAC = "ARASAAC"
 FUENTE_CODEX = "codex"
 FUENTE_FLUX = "flux"
@@ -113,8 +116,41 @@ class ImageGenerationError(Exception):
     """Fallo al generar una imagen concreta. No aborta el lote completo."""
 
 
+def _normaliza(texto: str) -> str:
+    """Minúsculas, sin tildes y sin signos, para comparar términos."""
+    base = unicodedata.normalize("NFD", texto.lower())
+    return "".join(c for c in base if unicodedata.category(c) != "Mn" and (c.isalnum() or c.isspace())).strip()
+
+
+def _elegir_pictograma(resultados: list, word: str) -> int | None:
+    """Elige el pictograma que de verdad corresponde al término, o ninguno.
+
+    Antes se tomaba `resultados[0]` sin mirar. La búsqueda de ARASAAC es difusa
+    y siempre devuelve algo: pedir "círculo rojo" entregaba el pictograma de
+    *semáforo rojo*, y "nombre propio" el de *¿cuál es tu nombre?*. Peor que no
+    encontrar nada, porque el sistema lo daba por resuelto y la profesora
+    proyectaba una imagen equivocada frente al curso.
+
+    Se acepta solo cuando alguna keyword coincide exactamente con el término
+    completo o con su núcleo —la primera palabra, que en español carga el
+    sustantivo—. Si nada coincide se devuelve None y la cadena sigue a la capa
+    siguiente, que es justo para lo que existe.
+    """
+    objetivo = _normaliza(word)
+    nucleo = objetivo.split()[0] if objetivo else ""
+
+    for exigencia in (objetivo, nucleo):
+        if not exigencia:
+            continue
+        for pictograma in resultados:
+            for kw in pictograma.get("keywords", []):
+                if _normaliza(kw.get("keyword", "")) == exigencia:
+                    return pictograma.get("_id")
+    return None
+
+
 async def _from_arasaac(client: httpx.AsyncClient, word: str, style: str) -> bytes | None:
-    """Descarga el pictograma de ARASAAC, o None si no existe la palabra."""
+    """Descarga el pictograma de ARASAAC, o None si no hay uno que corresponda."""
     try:
         search = await client.get(ARASAAC_SEARCH.format(palabra=word), timeout=ARASAAC_TIMEOUT)
         if search.status_code != 200:
@@ -123,8 +159,9 @@ async def _from_arasaac(client: httpx.AsyncClient, word: str, style: str) -> byt
         if not isinstance(resultados, list) or not resultados:
             return None
 
-        pid = resultados[0].get("_id")
+        pid = _elegir_pictograma(resultados, word)
         if not pid:
+            logger.debug("ARASAAC devolvió %d resultados para '%s', ninguno corresponde", len(resultados), word)
             return None
 
         # `color=false` entrega la versión de línea negra, que es justo lo que
@@ -255,14 +292,17 @@ def build_prompt(word: str, style: str) -> str:
     )
 
 
-def cache_path(word: str, style: str, model: str) -> tuple[str, str]:
+def cache_path(word: str, style: str, model: str, ext: str = "png") -> tuple[str, str]:
     """Ruta en disco y URL pública, derivadas del contenido.
 
     El nombre depende de palabra + estilo + modelo, así que cambiar de modelo
     invalida el caché automáticamente en vez de servir mezclas de estilos.
+
+    `ext` existe porque las figuras geométricas se sirven como SVG: son exactas
+    y pesan menos de 1 KB, y rasterizarlas a PNG solo perdería nitidez.
     """
     digest = hashlib.sha256(f"{word}|{style}|{model}".encode()).hexdigest()[:16]
-    filename = f"{digest}.png"
+    filename = f"{digest}.{ext}"
     return os.path.join(IMAGES_DIR, filename), f"{PUBLIC_PREFIX}/{filename}"
 
 
@@ -364,9 +404,11 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
     pending: dict[str, str] = {}
 
     for word, style in words.items():
-        path, url = cache_path(word, style, model)
-        if os.path.exists(path):
-            results[word] = url  # acierto de caché: sin llamada, sin costo
+        for ext in ("svg", "png"):
+            path, url = cache_path(word, style, model, ext=ext)
+            if os.path.exists(path):
+                results[word] = url  # acierto de caché: sin llamada, sin costo
+                break
         else:
             pending[word] = style
 
@@ -381,6 +423,26 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
 
         async def one(word: str, style: str) -> tuple[str, str | None]:
             async with semaphore:
+                # 0) Figuras geométricas: dibujadas, no buscadas ni generadas.
+                #    ARASAAC tiene la forma pero no el color —"círculo rojo"
+                #    devolvía un círculo amarillo rayado— y un generativo no
+                #    reproduce la misma figura entre escenas, que es justo lo
+                #    que una clase de patrones necesita comparar.
+                figura = shapes.render(word)
+                if figura is not None:
+                    path, url = cache_path(word, style, model, ext="svg")
+                    if not os.path.exists(path):
+                        tmp = f"{path}.{os.getpid()}.tmp"
+                        try:
+                            with open(tmp, "wb") as handle:
+                                handle.write(figura)
+                            os.replace(tmp, path)
+                        except Exception as exc:
+                            logger.warning("No se pudo guardar la figura de '%s': %s", word, exc)
+                            return word, None
+                    origen[word] = FUENTE_FIGURA
+                    return word, url
+
                 path, url = cache_path(word, style, model)
 
                 # 1) ARASAAC: gratis e instantáneo. Cubre casi todo el
