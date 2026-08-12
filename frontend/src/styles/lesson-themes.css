@@ -1,0 +1,141 @@
+/* Mundos visuales de las clases.
+ *
+ * Ocho paletas diseñadas a mano; la IA solo elige cuál calza con el contenido
+ * (`metadata.visual_theme`). Nunca genera color ni CSS.
+ *
+ * Restricciones que todas cumplen, por el medio (ver DESIGN.md):
+ * - fondo CLARO tintado, nunca blanco puro ni oscuro: el negro de un proyector
+ *   con luz ambiente es gris, y un fondo lavado pierde todo el contraste;
+ * - texto oscuro sobre fondo con contraste ≥ 7:1;
+ * - color plano, sin gradientes: producen banding al proyectar;
+ * - el color acompaña al contenido, nunca lo reemplaza como portador de
+ *   significado.
+ */
+
+/* Matemática: cantidades, formas, patrones. Azul con acento naranjo. */
+.lesson-player[data-tema='numeros'] {
+  --lp-bg: #f2f6ff;
+  --lp-surface: #e2ebfd;
+  --lp-ink: #10203f;
+  --lp-accent: #1d4ed8;
+  --lp-accent-ink: #ffffff;
+  --lp-deco: #1d4ed8;
+  --lp-recap-bg: #10203f;
+}
+
+/* Seres vivos, plantas, animales. Verde con tierra. */
+.lesson-player[data-tema='naturaleza'] {
+  --lp-bg: #f1faf2;
+  --lp-surface: #dcf2e0;
+  --lp-ink: #11301c;
+  --lp-accent: #15803d;
+  --lp-accent-ink: #ffffff;
+  --lp-deco: #15803d;
+  --lp-recap-bg: #11301c;
+}
+
+/* Día y noche, astros, luz, el paso del tiempo. Índigo con ámbar. */
+.lesson-player[data-tema='universo'] {
+  --lp-bg: #f4f3ff;
+  --lp-surface: #e5e2fd;
+  --lp-ink: #1e1a4d;
+  --lp-accent: #4f46e5;
+  --lp-accent-ink: #ffffff;
+  --lp-deco: #4f46e5;
+  --lp-recap-bg: #1e1a4d;
+}
+
+/* Lectura, escritura, letras y cuentos. Violeta cálido. */
+.lesson-player[data-tema='palabras'] {
+  --lp-bg: #fdf3fb;
+  --lp-surface: #f9e2f4;
+  --lp-ink: #3c0f34;
+  --lp-accent: #a21caf;
+  --lp-accent-ink: #ffffff;
+  --lp-deco: #a21caf;
+  --lp-recap-bg: #3c0f34;
+}
+
+/* Familia, oficios, convivencia, señales, historia. Ámbar terracota. */
+.lesson-player[data-tema='comunidad'] {
+  --lp-bg: #fff8ed;
+  --lp-surface: #ffecd2;
+  --lp-ink: #3d2205;
+  --lp-accent: #c2410c;
+  --lp-accent-ink: #ffffff;
+  --lp-deco: #c2410c;
+  --lp-recap-bg: #3d2205;
+}
+
+/* Cuerpo, salud, emociones, sentidos. Coral. */
+.lesson-player[data-tema='cuerpo'] {
+  --lp-bg: #fff4f4;
+  --lp-surface: #ffe1e1;
+  --lp-ink: #43101a;
+  --lp-accent: #be123c;
+  --lp-accent-ink: #ffffff;
+  --lp-deco: #be123c;
+  --lp-recap-bg: #43101a;
+}
+
+/* Mar, lluvia, clima, ciclo del agua. Celeste turquesa. */
+.lesson-player[data-tema='agua'] {
+  --lp-bg: #eff9fd;
+  --lp-surface: #d6eef8;
+  --lp-ink: #0a2c3d;
+  --lp-accent: #0369a1;
+  --lp-accent-ink: #ffffff;
+  --lp-deco: #0369a1;
+  --lp-recap-bg: #0a2c3d;
+}
+
+/* Música, colores, dibujo. Magenta vivo. */
+.lesson-player[data-tema='arte'] {
+  --lp-bg: #fdf4f8;
+  --lp-surface: #fbe3ef;
+  --lp-ink: #3d0f28;
+  --lp-accent: #db2777;
+  --lp-accent-ink: #ffffff;
+  --lp-deco: #db2777;
+  --lp-recap-bg: #3d0f28;
+}
+
+/* --- Fondo decorativo ------------------------------------------------------
+ * Formas grandes y planas, muy tenues, ancladas a las esquinas. Dan carácter
+ * sin competir con el contenido ni tocar la zona donde va el texto.
+ * `aria-hidden` en el marcado: no aporta significado.
+ */
+.lp-deco {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.lp-deco svg {
+  position: absolute;
+  color: var(--lp-deco);
+  /* Muy tenue a propósito: en las capturas de verificación, a 0.085 el círculo
+   * del fondo se cruzaba con las tarjetas del quiz y competía con el contenido.
+   * La decoración da carácter; no debe disputarle la atención al curso. */
+  opacity: 0.05;
+}
+/* Dos manchas en esquinas opuestas: componen sin encerrar el contenido. */
+/* Ancladas fuera del borde: entra solo la parte que insinúa la forma, y el
+ * centro de la pantalla —donde vive el contenido— queda limpio. */
+.lp-deco-a {
+  top: -14vh;
+  right: -10vw;
+  width: 38vw;
+  height: 38vw;
+}
+.lp-deco-b {
+  bottom: -16vh;
+  left: -12vw;
+  width: 30vw;
+  height: 30vw;
+  opacity: 0.04;
+}
+
+/* La escena va sobre la decoración. */
+.lp-escena { position: relative; z-index: 1; }

@@ -51,9 +51,11 @@ class ProveedorFalso:
     def __init__(self, *respuestas):
         self.respuestas = list(respuestas)
         self.prompts = []
+        self.modelos = []
 
     async def __call__(self, settings, *, prompt, system, **kwargs):
         self.prompts.append(prompt)
+        self.modelos.append(kwargs.get("openrouter_model", ""))
         contenido = self.respuestas.pop(0)
         if isinstance(contenido, Exception):
             raise contenido
@@ -161,16 +163,19 @@ def test_dos_json_invalidos_seguidos_no_quedan_en_bucle():
     raise AssertionError("dos respuestas no parseables deben cortar, no reintentar sin fin")
 
 
-def test_un_402_sin_creditos_no_se_reintenta():
-    """Reintentar un error de cuota solo gasta tiempo: el segundo intento falla igual."""
-    fake = ProveedorFalso(HTTPException(status_code=402, detail="sin créditos"))
-    try:
-        generar(fake)
-    except HTTPException as exc:
-        assert exc.status_code == 402
-        assert len(fake.prompts) == 1
-        return
-    raise AssertionError("un 402 debe propagarse tal cual, sin segunda llamada")
+def test_un_402_no_se_reintenta_con_el_mismo_modelo():
+    """Reintentar un error de cuota contra el mismo proveedor solo gasta tiempo.
+
+    Lo que sí corresponde es pasar al siguiente de la cascada, y eso lo cubre
+    `test_sin_cuota_pasa_al_siguiente_modelo`.
+    """
+    fake = ProveedorFalso(
+        HTTPException(status_code=402, detail="sin créditos"),
+        draft_valido(),
+    )
+    generar(fake)
+    # Dos llamadas: una por modelo, no dos contra el mismo.
+    assert fake.modelos[0] != fake.modelos[1]
 
 
 def test_campo_inventado_por_el_modelo_gatilla_reintento():
@@ -203,6 +208,62 @@ def test_los_limites_se_aplican_segun_el_curso():
     fake = ProveedorFalso(copy.deepcopy(largo), draft_valido())
     generar(fake, grade_level="1° Básico")
     assert "el máximo para 1° Básico es 90" in fake.prompts[1]
+
+
+# ---------------------------------------------------------------------------
+# Cascada de modelos
+# ---------------------------------------------------------------------------
+
+def test_sin_cuota_pasa_al_siguiente_modelo():
+    """La profesora no puede quedarse sin clase porque un proveedor tuvo un mal
+    día. Un 402 no se arregla reintentando con el mismo modelo."""
+    fake = ProveedorFalso(
+        HTTPException(status_code=402, detail="sin créditos"),
+        draft_valido(),
+    )
+    draft, _ = generar(fake)
+    assert len(draft.scenes) == 5
+    assert fake.modelos == lessons.LESSONS_OPENROUTER_MODELS[:2], fake.modelos
+
+
+def test_rate_limit_tambien_cambia_de_modelo():
+    fake = ProveedorFalso(HTTPException(status_code=429, detail="límite"), draft_valido())
+    generar(fake)
+    assert fake.modelos[0] != fake.modelos[1]
+
+
+def test_un_error_de_contenido_no_cambia_de_modelo():
+    """El problema es lo que pedimos, no quién responde: el reintento con
+    feedback va contra el mismo modelo."""
+    malo = draft_valido()
+    malo["scenes"][4]["data"]["key_points"] = []
+    fake = ProveedorFalso(malo, draft_valido())
+    generar(fake)
+    assert fake.modelos[0] == fake.modelos[1]
+
+
+def test_si_todos_los_proveedores_fallan_el_error_es_visible():
+    fake = ProveedorFalso(*[HTTPException(status_code=429, detail="límite")
+                            for _ in lessons.LESSONS_OPENROUTER_MODELS])
+    try:
+        generar(fake)
+    except HTTPException as exc:
+        assert exc.status_code == 429
+        assert len(fake.modelos) == len(lessons.LESSONS_OPENROUTER_MODELS)
+        return
+    raise AssertionError("con todos los proveedores caídos debe fallar visiblemente")
+
+
+def test_una_clave_invalida_no_recorre_la_cascada():
+    """Un 400 se repetiría igual en todos: recorrerlos solo gasta tiempo."""
+    fake = ProveedorFalso(HTTPException(status_code=400, detail="API key inválida"))
+    try:
+        generar(fake)
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert len(fake.modelos) == 1
+        return
+    raise AssertionError("un 400 debe propagarse de inmediato")
 
 
 # ---------------------------------------------------------------------------
@@ -295,14 +356,18 @@ def test_el_system_prompt_separa_pantalla_de_narracion():
 # ---------------------------------------------------------------------------
 
 def test_max_tokens_deja_margen_sobre_una_clase_real():
-    """Un truncado por `max_tokens` produce JSON inválido y gasta el reintento,
-    que es lo que el presupuesto de tiempo no aguanta."""
+    """Un truncado por `max_tokens` produce JSON inválido y gasta el reintento."""
     tamano = len(json.dumps(draft_valido(), ensure_ascii=False))
     # ~4 caracteres por token es la regla de bolsillo para español.
     tokens_estimados = tamano / 4
-    assert lessons.MAX_TOKENS > tokens_estimados * 2, (
-        f"la fixture ocupa ~{tokens_estimados:.0f} tokens y max_tokens es {lessons.MAX_TOKENS}"
-    )
+    assert lessons._max_tokens(5) > tokens_estimados * 2
+
+
+def test_max_tokens_escala_con_las_laminas_pedidas():
+    """Con diez láminas el techo fijo de 6.000 truncaba el JSON."""
+    por_escena = len(json.dumps(draft_valido(), ensure_ascii=False)) / 4 / 5
+    assert lessons._max_tokens(10) > por_escena * 10 * 1.8
+    assert lessons._max_tokens(10) > lessons._max_tokens(5)
 
 
 if __name__ == "__main__":

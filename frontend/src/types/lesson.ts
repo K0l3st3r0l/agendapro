@@ -3,6 +3,11 @@
 export type SceneType = 'concept' | 'example' | 'process' | 'quiz' | 'recap';
 export type MotionPreset = 'none' | 'gentle-reveal' | 'step-by-step' | 'answer-reveal' | 'static';
 export type AssetStatus = 'pending' | 'ready' | 'failed';
+/** Mundo visual de la clase. La IA elige uno; las paletas y formas están en
+ *  `lesson-themes.css` y `SceneBackdrop.tsx`. */
+export type VisualTheme =
+  | 'numeros' | 'naturaleza' | 'universo' | 'palabras'
+  | 'comunidad' | 'cuerpo' | 'agua' | 'arte';
 
 export interface Asset {
   id: string;
@@ -88,7 +93,7 @@ export interface LessonSpec {
       ordinal: number; text: string; source_ref: string;
     }[];
   };
-  metadata: { title: string; topic: string; lesson_kind: string };
+  metadata: { title: string; topic: string; lesson_kind: string; visual_theme: VisualTheme };
   duration_minutes: number;
   audience: string;
   assets: Asset[];

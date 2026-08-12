@@ -72,6 +72,9 @@ export const lessonsAPI = {
   present: (id: number) => api.get(`/lessons/${id}/present`),
   update: (id: number, data: object) => api.put(`/lessons/${id}`, data),
   remove: (id: number) => api.delete(`/lessons/${id}`),
+  // Resolver imágenes va aparte de guardar: la mayoría se dibuja o sale de
+  // ARASAAC en menos de un segundo, pero una que caiga a la IA puede tardar.
+  resolveAssets: (id: number) => api.post(`/lessons/${id}/assets`, {}, { timeout: 180000 }),
 };
 
 // Currículum MINEDUC

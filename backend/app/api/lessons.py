@@ -43,13 +43,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/lessons", tags=["lessons"])
 
-# El draft no incluye currículum resuelto ni las garantías del servidor, así que
-# es bastante más chico que el spec completo. 6000 deja el doble de margen sobre
-# una clase de 5 escenas medida con la fixture, sin regalar latencia: un truncado
-# por max_tokens produce JSON inválido y gatilla el reintento, que es justo lo
-# que el presupuesto de tiempo no aguanta.
-MAX_TOKENS = 6000
+# El presupuesto de salida escala con las láminas pedidas: una clase de cinco
+# escenas ocupa ~2.600 tokens medidos sobre la fixture, así que con diez el techo
+# fijo de 6.000 truncaba el JSON y gatillaba el reintento. La profesora aceptó
+# esperar hasta dos minutos, y un reintento cuesta mucho más que unos tokens de
+# margen.
+TOKENS_BASE = 2500
+TOKENS_POR_ESCENA = 1300
 TEMPERATURE = 0.6
+
+
+def _max_tokens(escenas: int) -> int:
+    return TOKENS_BASE + TOKENS_POR_ESCENA * max(escenas or lesson_schema.ESCENAS_POR_DEFECTO, 3)
 
 # El modelo del Constructor (deepseek-v4-flash) no sirve acá: medido con este
 # mismo prompt rinde ~65 tokens/s y tarda entre 42 y 92 s en emitir la clase,
@@ -58,7 +63,34 @@ TEMPERATURE = 0.6
 # hace el mismo trabajo a ~184 tokens/s. Solo aplica cuando la llamada sale por
 # OpenRouter; con un proveedor directo manda la configuración de la profesora.
 # Medición en wiki: projects/agendapro/decisions/modelo-storyboard-clases.
-LESSONS_OPENROUTER_MODEL = os.getenv("LESSONS_OPENROUTER_MODEL", "google/gemini-2.5-flash")
+# Cascada, no un modelo único. Depender de uno solo significa que la profesora
+# se queda sin poder preparar su clase cuando ese proveedor tiene un mal día,
+# agota cuota o cambia de precio. Se prueban en orden y se pasa al siguiente
+# ante cuota agotada, rate limit o indisponibilidad —nunca ante un error de
+# contenido, que se corrige reintentando con el mismo modelo.
+#
+# Orden medido el 2026-08-12 con el mismo prompt (una corrida por modelo):
+#
+#   gpt-5.6-luna       27 s   $0,0019   válido
+#   gemini-2.5-flash   20 s   $0,0087   válido
+#   deepseek-v4-flash  217 s  $0,0006   INVÁLIDO (respuesta correcta apuntando
+#                                        a otra pregunta)
+#
+# Luna va primero: calidad equivalente a Gemini y 4,6× más barato; los 7 s extra
+# no significan nada contra el minuto y medio que la profesora igual espera por
+# las imágenes. DeepSeek queda al final —es el más barato pero tardó 3,6 minutos
+# y aun así falló la validación—; está solo como último recurso antes de dejar a
+# la profesora sin clase.
+LESSONS_OPENROUTER_MODELS = [
+    m.strip() for m in os.getenv(
+        "LESSONS_OPENROUTER_MODELS",
+        "openai/gpt-5.6-luna,google/gemini-2.5-flash,deepseek/deepseek-v4-flash-0731",
+    ).split(",") if m.strip()
+]
+
+# Estados en los que cambiar de modelo sí ayuda: el problema es el proveedor,
+# no lo que le pedimos. Un 400 (clave inválida) o un 422 se repetirían igual.
+ESTADOS_PARA_CAMBIAR_DE_MODELO = {402, 429, 503, 529}
 
 
 SYSTEM_PROMPT = """Eres una profesora chilena de educación básica con veinte años de aula \
@@ -98,12 +130,10 @@ explicarla. `data.goal` lleva el objetivo de la clase solo si es la primera esce
 pregunta declarada en `questions`.
 - "recap": cierra la clase. Llena `data.key_points`.
 
-LA CLASE TIENE CINCO ESCENAS, una de cada tipo, en este orden:
-concept → example → process → quiz → recap.
+{{ESCENAS}}
 
-Seis es el máximo absoluto y solo si el contenido lo justifica de verdad. No \
-agregues escenas para alargar: una clase de 45 minutos son cinco ideas bien \
-explicadas, no ocho a medias. Siempre termina en "recap".
+No agregues escenas para alargar ni repitas contenido para llegar al número: \
+cada escena tiene que aportar una idea propia. Siempre termina en "recap".
 
 REGLAS DE LOS CAMPOS DE TEXTO:
 
@@ -131,6 +161,32 @@ CIERRE DE LA CLASE:
 - `exit_assessment.prompt` es obligatorio: qué se le pide al estudiante para \
 demostrar lo aprendido. Debe poder responderse en un minuto.
 """
+
+
+def _instruccion_escenas(pedidas: int) -> str:
+    """Cuántas láminas pedir, según lo que eligió la profesora."""
+    if not pedidas:
+        return (
+            "LA CLASE TIENE CINCO ESCENAS, una de cada tipo, en este orden:\n"
+            "concept → example → process → quiz → recap."
+        )
+    if pedidas <= 5:
+        return (
+            f"LA CLASE TIENE EXACTAMENTE {pedidas} ESCENAS. Elige los tipos que mejor "
+            f"enseñen este contenido y cierra siempre con 'recap'."
+        )
+    # Con más de cinco hay que repetir tipos. Medido: pidiendo 6 sin esta regla,
+    # el modelo devolvió tres 'concept' seguidos y ningún 'process' — tres
+    # láminas que se ven y se sienten iguales, que es justo lo que las cinco
+    # composiciones distintas existen para evitar.
+    return (
+        f"LA CLASE TIENE EXACTAMENTE {pedidas} ESCENAS.\n"
+        f"Usa los CINCO tipos al menos una vez antes de repetir ninguno: una clase "
+        f"con tres 'concept' seguidos son tres láminas que se ven iguales y el "
+        f"curso desconecta. Recién después repite el tipo que el contenido pida, "
+        f"con material distinto —dos 'example' con situaciones diferentes, un "
+        f"segundo 'quiz' sobre otra cosa—. Cierra siempre con 'recap'."
+    )
 
 
 def _reglas_de_nivel(grade_level: str) -> str:
@@ -177,6 +233,8 @@ class StoryboardRequest(BaseModel):
     unit: str = Field("", max_length=200)
     duration_minutes: int = Field(45, ge=10, le=180)
     lesson_kind: str = Field("introduction")
+    # 0 = la profesora no eligió; se usa el default de cinco.
+    scene_count: int = Field(0, ge=0, le=lesson_schema.MAX_SCENES)
     oa_refs: List[str] = Field(default_factory=list)
     indicator_refs: List[str] = Field(default_factory=list)
     instructions: str = Field("", max_length=1500)
@@ -262,13 +320,13 @@ def _build_prompt(req: StoryboardRequest, bloque_curricular: str) -> str:
     if req.instructions:
         partes.append(f"INDICACIONES DE LA PROFESORA (respétalas):\n{req.instructions}")
 
-    partes.append(REGLAS_ESCENAS)
+    partes.append(REGLAS_ESCENAS.replace("{{ESCENAS}}", _instruccion_escenas(req.scene_count)))
     partes.append(_reglas_de_nivel(req.grade_level))
     return "\n\n".join(partes)
 
 
 async def _generar_validado(
-    settings, prompt: str, grade_level: str, provider: Optional[str]
+    settings, prompt: str, grade_level: str, provider: Optional[str], escenas_pedidas: int = 0
 ) -> tuple[LessonDraft, providers.GenerationResult]:
     """Genera y valida. Un reintento con el error como feedback, y basta.
 
@@ -278,26 +336,56 @@ async def _generar_validado(
     de longitud por nivel solo se pueden comprobar después.
     """
 
-    async def pedir(texto: str) -> providers.GenerationResult:
+    async def pedir(texto: str, modelo: str) -> providers.GenerationResult:
         return await providers.generate_json(
             settings,
             prompt=texto,
             system=SYSTEM_PROMPT,
             provider=provider,
-            max_tokens=MAX_TOKENS,
+            max_tokens=_max_tokens(escenas_pedidas),
             temperature=TEMPERATURE,
             gemini_schema=lesson_schema.gemini_schema,
             openai_schema=lesson_schema.openai_schema,
             schema_name="clase_visual",
-            openrouter_model=LESSONS_OPENROUTER_MODEL,
+            openrouter_model=modelo,
         )
 
+    costo_total = 0.0
+    ultimo_de_proveedor: HTTPException | None = None
+
+    for modelo in LESSONS_OPENROUTER_MODELS:
+        try:
+            draft, result = await _intentar_con(pedir, prompt, modelo, grade_level, escenas_pedidas)
+            result.cost += costo_total
+            return draft, result
+        except HTTPException as exc:
+            if exc.status_code in ESTADOS_PARA_CAMBIAR_DE_MODELO:
+                # El proveedor está caído, sin cuota o limitando: otro modelo sí
+                # puede responder. La profesora no tiene por qué quedarse sin
+                # clase porque un proveedor tuvo un mal día.
+                logger.warning("%s no está disponible (%s); probando el siguiente", modelo, exc.status_code)
+                ultimo_de_proveedor = exc
+                continue
+            raise
+
+    raise ultimo_de_proveedor or HTTPException(
+        status_code=503,
+        detail="Ningún proveedor de IA está disponible en este momento. Inténtalo en unos minutos.",
+    )
+
+
+async def _intentar_con(pedir, prompt: str, modelo: str, grade_level: str, escenas_pedidas: int):
+    """Un modelo, hasta dos intentos: el segundo lleva los errores como feedback.
+
+    Cambiar de modelo por un error de contenido no serviría —el problema es lo
+    que pedimos, no quién responde—, así que el reintento va contra el mismo.
+    """
     costo_previo = 0.0
     try:
-        result = await pedir(prompt)
+        result = await pedir(prompt, modelo)
         costo_previo = result.cost
         draft = LessonDraft(**result.content)
-        validate_semantics(draft, grade_level)
+        validate_semantics(draft, grade_level, escenas_pedidas)
         return draft, result
     except providers.InvalidJSONError as exc:
         # Un JSON cortado o malformado también merece el reintento. Antes se
@@ -308,27 +396,28 @@ async def _generar_validado(
             f"{exc.detail} Devuelve el JSON completo y bien formado, y acorta el "
             f"contenido si es necesario."
         )
-        logger.warning("Storyboard no parseable en el primer intento: %s", exc.detail)
+        logger.warning("[%s] storyboard no parseable en el primer intento: %s", modelo, exc.detail)
     except (ValidationError, ValueError) as exc:
         primer_error = str(exc)
-        logger.warning("Storyboard inválido en el primer intento: %s", primer_error)
+        logger.warning("[%s] storyboard inválido en el primer intento: %s", modelo, primer_error)
 
     retry = await pedir(
         f"{prompt}\n\n"
         "El intento anterior no cumplió las reglas. Errores concretos:\n"
         f"{primer_error}\n"
-        "Corrige SOLO eso y responde de nuevo con el JSON completo y válido."
+        "Corrige SOLO eso y responde de nuevo con el JSON completo y válido.",
+        modelo,
     )
     retry.cost += costo_previo
 
     try:
         draft = LessonDraft(**retry.content)
-        validate_semantics(draft, grade_level)
+        validate_semantics(draft, grade_level, escenas_pedidas)
         return draft, retry
     except (ValidationError, ValueError) as segundo_error:
         # Falla visible: entregar media clase inválida es peor que no entregar
         # nada, porque la profesora se entera recién frente al curso.
-        logger.warning("Storyboard inválido en el segundo intento: %s", segundo_error)
+        logger.warning("[%s] storyboard inválido en el segundo intento: %s", modelo, segundo_error)
         raise HTTPException(
             status_code=502,
             detail=(
@@ -349,7 +438,9 @@ async def generar_storyboard(
     prompt = _build_prompt(req, bloque)
 
     inicio = time.monotonic()
-    draft, result = await _generar_validado(settings, prompt, req.grade_level, req.provider)
+    draft, result = await _generar_validado(
+        settings, prompt, req.grade_level, req.provider, req.scene_count
+    )
     elapsed_ms = int((time.monotonic() - inicio) * 1000)
 
     spec = build_spec(
@@ -531,12 +622,21 @@ async def resolver_assets(
     fila = _buscar(db, lesson_id, current_user.id)
     spec = LessonSpec(**fila.spec)
 
-    pendientes = {a.query: a.style for a in spec.assets if a.status != "ready" and a.query}
+    # Siempre a color: `coloring` entrega contorno negro para pintar en papel,
+    # que es lo correcto en una guía imprimible del Constructor y lo peor
+    # posible proyectado —un dibujo sin relleno se pierde en el telón—. El
+    # modelo elegía "coloring" por su cuenta al ver que la clase es de primero
+    # básico.
+    pendientes = {a.query: "photo" for a in spec.assets if a.status != "ready" and a.query}
     if not pendientes:
         return {"resueltos": 0, "pendientes": 0, "message": "Las imágenes ya estaban listas."}
 
     settings = get_user_settings(current_user.id, db)
-    urls = await images.generate_images(settings, pendientes)
+    # Las clases visuales prefieren la ilustración generada por sobre el
+    # pictograma: se proyecta al curso y la paleta acompaña al tema de la clase.
+    urls = await images.generate_images(
+        settings, pendientes, preferir_ia=True, theme=spec.metadata.visual_theme
+    )
 
     fallidos = 0
     for asset in spec.assets:
@@ -548,9 +648,7 @@ async def resolver_assets(
             asset.status = "ready"
             # Las figuras geométricas se dibujan acá mismo; lo demás puede venir
             # de ARASAAC, que exige atribución por su licencia CC BY-NC-SA.
-            asset.source = "builtin" if url.endswith(".svg") else "arasaac"
-            if asset.source == "arasaac":
-                asset.credit = "Pictogramas de ARASAAC (CC BY-NC-SA), Gobierno de Aragón"
+            asset.source = "builtin" if url.endswith(".svg") else "generated"
         else:
             # `failed` no rompe la clase: el player muestra el texto alternativo.
             asset.status = "failed"

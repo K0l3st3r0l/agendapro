@@ -61,6 +61,17 @@
   margin: 0;
   letter-spacing: -0.02em;
 }
+/* Barra de acento bajo el título: ancla la lámina y marca el mundo de la clase
+ * sin gastar espacio de contenido. */
+.lp-titulo::after {
+  content: '';
+  display: block;
+  width: 12vh;
+  height: 0.9vh;
+  margin-top: 1.6vh;
+  border-radius: 999px;
+  background: var(--lp-accent);
+}
 
 .lp-cuerpo {
   font-size: var(--lp-body);
@@ -119,6 +130,7 @@
 .lp-paso {
   flex: 1;
   background: var(--lp-surface);
+  border-bottom: 0.8vh solid var(--lp-accent);
   border-radius: var(--lp-radius);
   padding: 3vh 2vw;
   display: flex;
@@ -163,7 +175,7 @@
   gap: 1.5vh;
   background: var(--lp-surface);
   color: var(--lp-ink);
-  border: 0.4vh solid transparent;
+  border: 0.4vh solid color-mix(in srgb, var(--lp-accent) 22%, transparent);
   border-radius: var(--lp-radius);
   padding: 2vh;
   font-family: inherit;
@@ -211,8 +223,8 @@
 .lp-recap {
   flex: 1;
   min-height: 0;
-  background: var(--lp-ink);
-  color: var(--lp-bg);
+  background: var(--lp-recap-bg, var(--lp-ink));
+  color: #ffffff;
   border-radius: var(--lp-radius);
   padding: var(--lp-pad);
   display: flex;
@@ -220,7 +232,7 @@
   justify-content: center;
   gap: var(--lp-stack);
 }
-.lp-recap .lp-titulo { color: var(--lp-bg); }
+.lp-recap .lp-titulo { color: #ffffff; }
 .lp-claves { list-style: none; margin: 0; padding: 0; display: grid; gap: 2vh; }
 .lp-clave {
   font-size: var(--lp-body);
@@ -236,7 +248,7 @@
   min-width: 0.5rem;
   min-height: 0.5rem;
   border-radius: 50%;
-  background: var(--lp-bg);
+  background: currentColor;
   flex-shrink: 0;
 }
 
@@ -259,6 +271,7 @@
   text-align: center;
   padding: 3vh;
   background: var(--lp-surface);
+  border: 0.5vh dashed color-mix(in srgb, var(--lp-accent) 35%, transparent);
   border-radius: var(--lp-radius);
   font-size: var(--lp-support);
   font-weight: 700;

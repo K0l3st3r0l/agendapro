@@ -35,6 +35,7 @@ export default function LessonBuilder() {
   const [oaElegidos, setOaElegidos] = useState<string[]>([]);
   const [topic, setTopic] = useState('');
   const [duracion, setDuracion] = useState(45);
+  const [laminas, setLaminas] = useState(5);
   const [instrucciones, setInstrucciones] = useState('');
 
   const [spec, setSpec] = useState<LessonSpec | null>(null);
@@ -43,9 +44,30 @@ export default function LessonBuilder() {
   const [cargando, setCargando] = useState(editando);
   const [error, setError] = useState('');
   const [sucio, setSucio] = useState(false);
+  const [preparandoImagenes, setPreparandoImagenes] = useState(false);
   const primeraCarga = useRef(true);
 
   // --- Carga inicial --------------------------------------------------------
+
+  const prepararImagenes = useCallback(async (lessonId: number, silencioso = false) => {
+    setPreparandoImagenes(true);
+    try {
+      const r = await lessonsAPI.resolveAssets(lessonId);
+      if (r.data.spec) setSpec(r.data.spec);
+      if (!silencioso) {
+        const { resueltos, fallidos } = r.data;
+        if (fallidos) toast(`${resueltos} imágenes listas, ${fallidos} sin resolver`, { icon: '🖼️' });
+        else if (resueltos) toast.success(`${resueltos} imágenes listas`);
+      }
+    } catch {
+      // Sin imágenes la clase se proyecta igual: el player muestra el texto
+      // alternativo. No vale la pena bloquear el guardado por esto.
+      if (!silencioso) toast.error('No se pudieron preparar las imágenes');
+    } finally {
+      setPreparandoImagenes(false);
+    }
+  }, []);
+
 
   useEffect(() => {
     curriculumAPI.getLevels().then((r) => setNiveles(r.data.levels)).catch(() => {});
@@ -70,10 +92,16 @@ export default function LessonBuilder() {
     if (!editando) return;
     lessonsAPI
       .get(Number(id))
-      .then((r) => setSpec(r.data.spec))
+      .then((r) => {
+        setSpec(r.data.spec);
+        const faltan = (r.data.spec?.assets ?? []).some(
+          (a: { status: string }) => a.status === 'pending',
+        );
+        if (faltan) prepararImagenes(Number(id), true);
+      })
       .catch(() => setError('No se pudo cargar la clase.'))
       .finally(() => setCargando(false));
-  }, [editando, id]);
+  }, [editando, id, prepararImagenes]);
 
   useEffect(() => {
     if (!grade || !subject) return;
@@ -112,6 +140,7 @@ export default function LessonBuilder() {
         subject,
         topic,
         duration_minutes: duracion,
+        scene_count: laminas,
         lesson_kind: 'introduction',
         oa_refs: oaElegidos,
         indicator_refs: [],
@@ -141,6 +170,9 @@ export default function LessonBuilder() {
         localStorage.removeItem(BORRADOR);
         setSucio(false);
         toast.success('Clase guardada');
+        // Las imágenes se resuelven recién acá porque necesitan la clase ya
+        // guardada. Es lo que faltaba: el endpoint existía y nadie lo llamaba.
+        await prepararImagenes(r.data.id);
         navigate(`/clases/${r.data.id}/editar`, { replace: true });
       }
     } catch (e: unknown) {
@@ -277,6 +309,20 @@ export default function LessonBuilder() {
             <label className="block">
               <span className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Duración (minutos)</span>
               <input type="number" min={10} max={180} className={campo} value={duracion} onChange={(e) => setDuracion(Number(e.target.value))} />
+            </label>
+
+            <label className="block">
+              <span className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Láminas
+                <span className="ml-2 font-normal text-gray-500">5 alcanza para una clase</span>
+              </span>
+              <select className={campo} value={laminas} onChange={(e) => setLaminas(Number(e.target.value))}>
+                {[3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                  <option key={n} value={n}>
+                    {n} láminas{n === 5 ? ' (recomendado)' : ''}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
 

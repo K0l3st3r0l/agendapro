@@ -84,9 +84,41 @@ MAX_PALABRAS_TOPIC = 8
 
 _una_a_la_vez = threading.Semaphore(1)
 
+# Paletas de las clases visuales. El cliente manda solo el NOMBRE del mundo, no
+# colores ni texto libre: igual que la palabra, es contenido producido por un
+# modelo y no se concatena nada que no esté en esta tabla.
+#
+# Existe para que las ilustraciones de una misma clase se vean del mismo mundo.
+# Sin esto, cada imagen sale con su propio estilo y la clase parece un collage
+# —que es la crítica de siempre a ilustrar con IA.
+MUNDOS = {
+    "numeros":    "azul cobalto y naranjo cálido, sobre fondo azul muy claro",
+    "naturaleza": "verdes frescos y café tierra, sobre fondo verde muy claro",
+    "universo":   "índigo profundo y amarillo dorado, sobre fondo lila muy claro",
+    "palabras":   "violeta y rosa, sobre fondo lila muy claro",
+    "comunidad":  "ámbar, terracota y ocre, sobre fondo crema",
+    "cuerpo":     "coral y rosa suave, sobre fondo rosa muy claro",
+    "agua":       "celeste y turquesa, sobre fondo celeste muy claro",
+    "arte":       "magenta, amarillo y turquesa, sobre fondo rosa muy claro",
+}
 
-def construir_prompt(palabra: str, estilo: str) -> str:
+
+def construir_prompt(palabra: str, estilo: str, mundo: str = "") -> str:
     """La plantilla vive acá, no en el cliente. Espeja build_prompt() del backend."""
+    if mundo in MUNDOS:
+        # Una clase proyectada en una sala con luz: formas grandes, pocos
+        # detalles y contornos definidos. Un dibujo delicado se pierde a ocho
+        # metros por más bonito que se vea en el monitor.
+        return (
+            f"Genera una imagen: ilustración educativa infantil de {palabra}. "
+            f"Paleta: {MUNDOS[mundo]}. "
+            "Estilo plano y moderno, formas grandes y simples, contornos definidos, "
+            "sin degradados ni sombras realistas. Un único objeto centrado, "
+            "ocupando casi todo el cuadro, sobre fondo liso. "
+            "Debe leerse con claridad proyectado a ocho metros de distancia. "
+            "Sin texto, sin letras, sin números, sin marcos, sin otros objetos. "
+            "Solo genera la imagen, no expliques nada."
+        )
     if estilo == "coloring":
         return (
             f"Genera una imagen: dibujo para colorear de {palabra}. "
@@ -155,8 +187,8 @@ def _ejecutar_codex(prompt: str) -> tuple[bytes | None, float, str]:
     return datos, time.time() - inicio, ""
 
 
-def generar(palabra: str, estilo: str) -> tuple[bytes | None, float, str]:
-    return _ejecutar_codex(construir_prompt(palabra, estilo))
+def generar(palabra: str, estilo: str, mundo: str = "") -> tuple[bytes | None, float, str]:
+    return _ejecutar_codex(construir_prompt(palabra, estilo, mundo))
 
 
 def generar_cover(subject: str, grade_level: str, topic: str) -> tuple[bytes | None, float, str]:
@@ -217,6 +249,7 @@ class Handler(BaseHTTPRequestHandler):
 
         palabra = str(datos.get("word", "")).strip()
         estilo = str(datos.get("style", "photo"))
+        mundo = str(datos.get("theme", "")).strip()
 
         if not PALABRA_RE.match(palabra) or len(palabra.split()) > MAX_PALABRAS:
             # Se rechaza sin generar: la palabra viene de contenido producido por
@@ -226,8 +259,11 @@ class Handler(BaseHTTPRequestHandler):
         if estilo not in ("photo", "coloring"):
             self._responder(400, {"error": "estilo no permitido"})
             return
+        if mundo and mundo not in MUNDOS:
+            self._responder(400, {"error": "mundo visual no permitido"})
+            return
 
-        png, segundos, error = generar(palabra, estilo)
+        png, segundos, error = generar(palabra, estilo, mundo)
         if png is None:
             logger.warning("falló '%s' (%s): %s", palabra, estilo, error)
             self._responder(502, {"error": error, "seconds": round(segundos, 1)})

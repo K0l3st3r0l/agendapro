@@ -43,6 +43,14 @@ AssetStyle = Literal["none", "photo", "coloring"]
 AssetSource = Literal["builtin", "arasaac", "generated"]
 AssetStatus = Literal["pending", "ready", "failed"]
 AssetFallback = Literal["alt_text", "static_diagram", "label"]
+# Paletas y fondos decorativos diseñados a mano; el modelo solo elige cuál calza
+# con el contenido. Mismo principio que las figuras: la IA declara intención, el
+# frontend renderiza. Nunca CSS ni colores generados.
+VisualTheme = Literal[
+    "numeros", "naturaleza", "universo", "palabras",
+    "comunidad", "cuerpo", "agua", "arte",
+]
+
 QuestionKind = Literal["single_choice"]
 ResponseMode = Literal["oral", "written", "drawing"]
 
@@ -104,12 +112,28 @@ LIMITES = {
 # admitir un paso más (el tope subió a 4) antes que cortar.
 
 MIN_SCENES = 3
-# Bajado de 8 tras medir: sin un techo estrecho el modelo entrega 6 y hasta 8
-# escenas, lo que dispara la latencia por output y además dispersa la clase. Una
-# clase de 45 minutos proyectada se sostiene con cinco escenas —una idea cada
-# nueve minutos, contando la interacción con el curso—; más que eso ya no es
-# profundidad, es relleno.
-MAX_SCENES = 6
+# Cinco es el default porque una clase de 45 minutos se sostiene con cinco ideas
+# —una cada nueve minutos, contando la interacción con el curso—, y porque sin un
+# techo el modelo entregaba 6 y hasta 8 escenas dispersando la clase.
+#
+# Pero es la profesora quien decide: un tema que necesita más desarrollo puede
+# pedir más láminas. El tope de 10 no es arbitrario: por sobre eso la latencia de
+# generación se dispara y una clase de 45 minutos ya no alcanza a cubrirlas.
+ESCENAS_POR_DEFECTO = 5
+MAX_SCENES = 10
+
+
+def rango_escenas(pedidas: int = 0) -> tuple[int, int]:
+    """Mínimo y máximo aceptados para el número de escenas que pidió la profesora.
+
+    Se deja un grado de holgura hacia arriba: si pide 7 y el modelo entrega 8
+    porque el contenido lo pedía, rechazar la clase entera sería desproporcionado
+    —la misma lógica que con los `key_points`.
+    """
+    if not pedidas:
+        return MIN_SCENES, MAX_SCENES
+    objetivo = max(MIN_SCENES, min(pedidas, MAX_SCENES))
+    return objetivo, min(objetivo + 1, MAX_SCENES)
 MAX_PALABRAS_QUERY = 3
 
 _GRADE_NUM = re.compile(r"(\d+)")
@@ -222,7 +246,10 @@ class AssetIntent(Strict):
         max_length=60,
         description="Sustantivo concreto y visual para buscar o generar la imagen. Nunca una frase.",
     )
-    style: AssetStyle = Field("none")
+    style: AssetStyle = Field(
+        "none",
+        description="Déjalo en 'none'. La clase se proyecta a color; 'coloring' es para imprimir.",
+    )
     alt: str = Field("", max_length=140, description="Descripción textual, obligatoria.")
     fallback: AssetFallback = Field("alt_text")
 
@@ -287,6 +314,16 @@ class LessonMetadata(Strict):
     title: str = Field("", max_length=60)
     topic: str = Field("", max_length=120)
     lesson_kind: LessonKind = Field("introduction")
+    visual_theme: VisualTheme = Field(
+        "numeros",
+        description=(
+            "Mundo visual de la clase, elegido por su CONTENIDO y no por la asignatura: "
+            "numeros (cantidades, formas, patrones), naturaleza (plantas, animales, seres vivos), "
+            "universo (día y noche, astros, luz, tiempo), palabras (lectura, escritura, letras, cuentos), "
+            "comunidad (familia, oficios, historia, convivencia, señales), cuerpo (salud, emociones, sentidos), "
+            "agua (mar, lluvia, clima, ciclo del agua), arte (música, colores, dibujo)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +439,7 @@ _REQUISITOS_POR_TIPO = {
 }
 
 
-def validate_semantics(draft: LessonDraft, grade_level: str) -> None:
+def validate_semantics(draft: LessonDraft, grade_level: str, escenas_pedidas: int = 0) -> None:
     """Reglas que el schema estático no puede expresar.
 
     Junta *todos* los errores en un solo `ValueError` en vez de fallar en el
@@ -412,8 +449,9 @@ def validate_semantics(draft: LessonDraft, grade_level: str) -> None:
     limites = LIMITES[nivel_de(grade_level)]
     errores: List[str] = []
 
-    if not (MIN_SCENES <= len(draft.scenes) <= MAX_SCENES):
-        errores.append(f"La clase debe tener entre {MIN_SCENES} y {MAX_SCENES} escenas, tiene {len(draft.scenes)}.")
+    minimo, maximo = rango_escenas(escenas_pedidas)
+    if not (minimo <= len(draft.scenes) <= maximo):
+        errores.append(f"La clase debe tener entre {minimo} y {maximo} escenas, tiene {len(draft.scenes)}.")
 
     ids_escena = [s.id for s in draft.scenes]
     if len(set(ids_escena)) != len(ids_escena):
@@ -554,6 +592,17 @@ def validate_semantics(draft: LessonDraft, grade_level: str) -> None:
         raise ValueError("\n".join(f"- {e}" for e in errores))
 
 
+# Códigos curriculares que el modelo copia del bloque de contexto y mete en el
+# texto proyectado: "¿Qué mensaje nos transmite esta imagen? [OA1:2]". Al curso
+# no le dice nada y ocupa el ancho del título. Se limpian en el servidor en vez
+# de rechazar la generación: es cosmético, no un error de contenido.
+_CODIGO_CURRICULAR = re.compile(r"\s*[\[\(]\s*[A-ZÑ]{2,4}\s*\d+\s*(?::\s*\d+\s*)?[\]\)]")
+
+
+def limpiar_texto_proyectado(texto: str) -> str:
+    return _CODIGO_CURRICULAR.sub("", texto or "").strip()
+
+
 # Palabras que no aportan nada a una búsqueda de pictograma y sí gastan el cupo
 # de términos útiles.
 _RUIDO_QUERY = {
@@ -576,6 +625,24 @@ def normalizar_query(query: str) -> str:
     return " ".join(palabras[:MAX_PALABRAS_QUERY])
 
 
+def _limpiar_escena(escena: Scene) -> Scene:
+    """Quita los códigos curriculares de lo que ve el curso.
+
+    `narration` y `teacher_note` se dejan intactos: ahí la referencia sí le
+    sirve a la profesora.
+    """
+    limpio = escena.model_copy(deep=True)
+    limpio.title = limpiar_texto_proyectado(limpio.title)
+    limpio.body = limpiar_texto_proyectado(limpio.body)
+    limpio.data.prompt = limpiar_texto_proyectado(limpio.data.prompt)
+    limpio.data.key_points = [limpiar_texto_proyectado(p) for p in limpio.data.key_points]
+    for ejemplo in limpio.data.examples:
+        ejemplo.text = limpiar_texto_proyectado(ejemplo.text)
+    for paso in limpio.data.steps:
+        paso.description = limpiar_texto_proyectado(paso.description)
+    return limpio
+
+
 def _recortar_escena(escena: Scene, limites: dict) -> Scene:
     """Deja la escena dentro de lo que cabe proyectado, sin rechazarla.
 
@@ -592,6 +659,15 @@ def _recortar_escena(escena: Scene, limites: dict) -> Scene:
     recortada.data.key_points = recortada.data.key_points[:max_puntos]
     recortada.data.examples = recortada.data.examples[:max_ejemplos]
     return recortada
+
+
+def _limpiar_pregunta(pregunta: Question) -> Question:
+    limpia = pregunta.model_copy(deep=True)
+    limpia.prompt = limpiar_texto_proyectado(limpia.prompt)
+    limpia.explanation = limpiar_texto_proyectado(limpia.explanation)
+    for opcion in limpia.options:
+        opcion.label = limpiar_texto_proyectado(opcion.label)
+    return limpia
 
 
 def build_spec(
@@ -612,8 +688,8 @@ def build_spec(
             Asset(**{**intent.model_dump(), "query": normalizar_query(intent.query)})
             for intent in draft.assets
         ],
-        scenes=[_recortar_escena(e, limites) for e in draft.scenes],
-        questions=draft.questions,
+        scenes=[_limpiar_escena(_recortar_escena(e, limites)) for e in draft.scenes],
+        questions=[_limpiar_pregunta(q) for q in draft.questions],
         teacher_notes=draft.teacher_notes,
         exit_assessment=draft.exit_assessment,
     )

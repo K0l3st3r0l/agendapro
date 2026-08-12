@@ -4,7 +4,9 @@ import { lessonsAPI } from '../services/api';
 import SceneRenderer from '../components/lesson/SceneRenderer';
 import { useSceneMotion } from '../components/lesson/useSceneMotion';
 import { esNivelInicial, type Asset, type LessonSpec } from '../types/lesson';
+import SceneBackdrop from '../components/lesson/SceneBackdrop';
 import '../styles/lesson-player.css';
+import '../styles/lesson-themes.css';
 
 /** Mantiene la pantalla encendida durante la clase.
  *
@@ -223,6 +225,7 @@ export default function LessonPresenter() {
     <div
       className="lesson-player"
       data-densidad={densidad}
+      data-tema={spec.metadata.visual_theme || 'numeros'}
       ref={contenedor}
       lang="es-CL"
     >
@@ -235,7 +238,9 @@ export default function LessonPresenter() {
         Escena {indice + 1} de {total}: {escena.title}
       </p>
 
-      <div ref={escenaRef} style={{ height: '100%' }}>
+      <SceneBackdrop theme={spec.metadata.visual_theme || 'numeros'} />
+
+      <div ref={escenaRef} style={{ height: '100%', position: 'relative', zIndex: 1 }}>
         <SceneRenderer
           scene={escena}
           assets={assets}

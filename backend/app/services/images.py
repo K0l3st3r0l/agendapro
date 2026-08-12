@@ -81,6 +81,13 @@ PUBLIC_PREFIX = "/static/images"
 # Cada imagen es un proceso aparte en el proveedor; más de 4 en paralelo no
 # acelera y sí aumenta la probabilidad de rate limit.
 MAX_CONCURRENT = 4
+
+# El puente NO paraleliza: Codex levanta un agente completo por imagen y las
+# serializa con un semáforo propio. Mandarle 4 a la vez no acelera nada y sí
+# hace que las últimas de la cola agoten su timeout esperando turno —medido:
+# con 9 imágenes los tiempos fueron 49 s, 53 s, 105 s, 196 s, 275 s, 333 s,
+# 386 s, y las que pasaron de 300 s murieron con BrokenPipeError.
+MAX_CONCURRENT_PUENTE = 1
 REQUEST_TIMEOUT = 120.0
 
 # Costo medido de FLUX.2 Pro, solo para reportar el gasto en los logs.
@@ -100,10 +107,12 @@ ARASAAC_TIMEOUT = 20.0
 
 # Puente en el host hacia la herramienta `image_gen` de Codex. Genera contra la
 # suscripción de ChatGPT, así que no gasta créditos en dólares — pero sí cuota
-# del plan y ~35 s por imagen. Ver agent-bridge/bridge.py.
+# del plan y ~50 s por imagen. Ver agent-bridge/bridge.py.
 BRIDGE_URL = os.getenv("AGENT_BRIDGE_URL", "")
 BRIDGE_TOKEN = os.getenv("AGENT_BRIDGE_TOKEN", "")
-BRIDGE_TIMEOUT = 300.0
+# Generoso a propósito: con la cola serializada, esperar turno es normal y no
+# es un error. Cortar antes solo tira a la basura una imagen que iba a llegar.
+BRIDGE_TIMEOUT = 900.0
 
 FUENTE_FIGURA = "figura"
 FUENTE_ARASAAC = "ARASAAC"
@@ -179,7 +188,7 @@ async def _from_arasaac(client: httpx.AsyncClient, word: str, style: str) -> byt
         return None
 
 
-async def _from_codex(client: httpx.AsyncClient, word: str, style: str) -> bytes | None:
+async def _from_codex(client: httpx.AsyncClient, word: str, style: str, theme: str = "") -> bytes | None:
     """Genera con Codex a través del puente del host, o None si no está o falla.
 
     El puente valida la palabra y arma el prompt: acá solo se le pasan la palabra
@@ -191,7 +200,7 @@ async def _from_codex(client: httpx.AsyncClient, word: str, style: str) -> bytes
         response = await client.post(
             f"{BRIDGE_URL.rstrip('/')}/image",
             headers={"X-Bridge-Token": BRIDGE_TOKEN},
-            json={"word": word, "style": style},
+            json={"word": word, "style": style, "theme": theme},
             timeout=BRIDGE_TIMEOUT,
         )
         if response.status_code != 200:
@@ -231,7 +240,7 @@ async def _from_codex_cover(
         return None
 
 
-async def _from_flux(client: httpx.AsyncClient, api_key: str, word: str, style: str) -> bytes | None:
+async def _from_flux(client: httpx.AsyncClient, api_key: str, word: str, style: str, theme: str = "") -> bytes | None:
     """Genera con FLUX.2 Pro, o None si falla. Ver nota del módulo.
 
     Respaldo intermedio: cubre las caídas del puente de Codex sin gastar el
@@ -251,7 +260,7 @@ async def _from_flux(client: httpx.AsyncClient, api_key: str, word: str, style: 
             },
             json={
                 "model": FLUX_MODEL,
-                "prompt": build_prompt(word, style),
+                "prompt": build_prompt(word, style, theme),
                 "n": 1,
                 "size": FLUX_SIZE,
             },
@@ -277,7 +286,33 @@ async def _from_flux(client: httpx.AsyncClient, api_key: str, word: str, style: 
         return None
 
 
-def build_prompt(word: str, style: str) -> str:
+MUNDOS = {
+    "numeros":    "azul cobalto y naranjo cálido, sobre fondo azul muy claro",
+    "naturaleza": "verdes frescos y café tierra, sobre fondo verde muy claro",
+    "universo":   "índigo profundo y amarillo dorado, sobre fondo lila muy claro",
+    "palabras":   "violeta y rosa, sobre fondo lila muy claro",
+    "comunidad":  "ámbar, terracota y ocre, sobre fondo crema",
+    "cuerpo":     "coral y rosa suave, sobre fondo rosa muy claro",
+    "agua":       "celeste y turquesa, sobre fondo celeste muy claro",
+    "arte":       "magenta, amarillo y turquesa, sobre fondo rosa muy claro",
+}
+
+
+def build_prompt(word: str, style: str, theme: str = "") -> str:
+    if theme in MUNDOS:
+        # Espeja `construir_prompt()` del puente: una clase puede resolver unas
+        # imágenes por Codex y otras por FLUX, y tienen que verse de la misma
+        # familia.
+        return (
+            f"Ilustración educativa infantil de: {word}. "
+            f"Paleta: {MUNDOS[theme]}. "
+            "Estilo plano y moderno, formas grandes y simples, contornos definidos, "
+            "sin degradados ni sombras realistas. Un único objeto centrado, "
+            "ocupando casi todo el cuadro, sobre fondo liso. "
+            "Debe leerse con claridad proyectado a ocho metros de distancia. "
+            "Sin texto, sin letras, sin números, sin marcos, sin otros objetos."
+        )
+
     if style == "coloring":
         return (
             f"Dibujo para colorear de: {word}. "
@@ -387,7 +422,74 @@ async def generate_cover(settings: AISettings, subject: str, grade_level: str, t
     return url
 
 
-async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[str, str]:
+async def _revisar_y_rehacer(
+    settings: AISettings, words: dict[str, str], results: dict[str, str],
+    origen: dict[str, str], theme: str,
+) -> dict[str, str]:
+    """Mira lo que generó FLUX y rehace con gpt-image lo que no se entiende.
+
+    El juez caza fallas claras —texto encima, objeto equivocado, dibujo
+    irreconocible—, que es justamente donde fallan los modelos rápidos. No
+    juzga estilo: para eso está el criterio de la profesora, que puede cambiar
+    cualquier imagen a mano.
+    """
+    from app.services import image_review
+
+    candidatas = {
+        w: os.path.join(IMAGES_DIR, os.path.basename(results[w]))
+        for w in words
+        if w in results and origen.get(w) == FUENTE_FLUX
+    }
+    imagenes = {}
+    for palabra, ruta in candidatas.items():
+        try:
+            with open(ruta, "rb") as fh:
+                imagenes[palabra] = fh.read()
+        except OSError:
+            continue
+    if not imagenes:
+        return results
+
+    veredictos = await image_review.revisar_lote(settings.openrouter_key, imagenes)
+    rechazadas = [w for w, (ok, _) in veredictos.items() if not ok]
+    for palabra in rechazadas:
+        logger.info("Imagen de '%s' rechazada: %s", palabra, veredictos[palabra][1])
+
+    if not rechazadas:
+        logger.info("Revisión: %d imágenes aprobadas, ninguna que rehacer", len(imagenes))
+        return results
+
+    # Tope duro: rehacer todo por el puente serializado costaría más tiempo del
+    # que la profesora puede esperar, y si el juez rechaza casi todo el problema
+    # está en el prompt de generación, no en las imágenes.
+    a_rehacer = rechazadas[: image_review.MAX_REGENERACIONES]
+    logger.info("Revisión: rehaciendo %d de %d con gpt-image", len(a_rehacer), len(imagenes))
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        for palabra in a_rehacer:
+            raw = await _from_codex(client, palabra, words.get(palabra, "photo"), theme)
+            if not raw:
+                continue
+            path, url = cache_path(palabra, words.get(palabra, "photo"), f"{settings.image_model}|{theme}")
+            tmp = f"{path}.{os.getpid()}.tmp"
+            try:
+                with open(tmp, "wb") as fh:
+                    fh.write(raw)
+                os.replace(tmp, path)
+                results[palabra] = url
+                origen[palabra] = FUENTE_CODEX
+            except OSError as exc:
+                logger.warning("No se pudo guardar la imagen rehecha de '%s': %s", palabra, exc)
+    return results
+
+
+async def generate_images(
+    settings: AISettings,
+    words: dict[str, str],
+    *,
+    preferir_ia: bool = False,
+    theme: str = "",
+) -> dict[str, str]:
     """Genera las imágenes que falten y devuelve {palabra: url}.
 
     `words` mapea cada palabra a su estilo ('photo' | 'coloring'). Las palabras
@@ -397,6 +499,11 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
     if not words:
         return {}
 
+    # `preferir_ia` invierte el orden entre ARASAAC y la IA. El Constructor deja
+    # ARASAAC primero: sus documentos son imprimibles y el pictograma es más
+    # legible en blanco y negro. Las clases visuales van al revés —el resultado
+    # se proyecta y tiene que ser bonito—, y con `theme` todas las imágenes de
+    # una misma clase salen de la misma paleta en vez de parecer un collage.
     model = settings.image_model
     os.makedirs(IMAGES_DIR, exist_ok=True)
 
@@ -405,7 +512,7 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
 
     for word, style in words.items():
         for ext in ("svg", "png"):
-            path, url = cache_path(word, style, model, ext=ext)
+            path, url = cache_path(word, style, f"{model}|{theme}", ext=ext)
             if os.path.exists(path):
                 results[word] = url  # acierto de caché: sin llamada, sin costo
                 break
@@ -416,6 +523,8 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
         logger.info("Caché completo: %d/%d imágenes servidas sin costo", len(results), len(words))
         return results
 
+    # FLUX sí paraleliza, así que la fase de generación va a 4. El puente
+    # serializado solo aparece después, rehaciendo las rechazadas de a una.
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
     origen: dict[str, str] = {}
 
@@ -430,7 +539,7 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
                 #    que una clase de patrones necesita comparar.
                 figura = shapes.render(word)
                 if figura is not None:
-                    path, url = cache_path(word, style, model, ext="svg")
+                    path, url = cache_path(word, style, f"{model}|{theme}", ext="svg")
                     if not os.path.exists(path):
                         tmp = f"{path}.{os.getpid()}.tmp"
                         try:
@@ -443,23 +552,37 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
                     origen[word] = FUENTE_FIGURA
                     return word, url
 
-                path, url = cache_path(word, style, model)
+                path, url = cache_path(word, style, f"{model}|{theme}")
 
-                # 1) ARASAAC: gratis e instantáneo. Cubre casi todo el
-                #    vocabulario concreto de básica.
-                raw = await _from_arasaac(client, word, style)
-                fuente = FUENTE_ARASAAC
+                if preferir_ia:
+                    # 1) FLUX primero: 13 s las cuatro en paralelo, contra 576 s
+                    #    que tomaron nueve por el puente serializado. Lo que no
+                    #    pase la revisión se rehace después con gpt-image, que
+                    #    ilustra mejor pero no paraleliza.
+                    raw = await _from_flux(client, settings.openrouter_key, word, style, theme)
+                    fuente = FUENTE_FLUX
+                    if raw is None:
+                        raw = await _from_codex(client, word, style, theme)
+                        fuente = FUENTE_CODEX
+                    if raw is None:
+                        raw = await _from_arasaac(client, word, style)
+                        fuente = FUENTE_ARASAAC
+                else:
+                    # 1) ARASAAC: gratis e instantáneo. Cubre casi todo el
+                    #    vocabulario concreto de básica.
+                    raw = await _from_arasaac(client, word, style)
+                    fuente = FUENTE_ARASAAC
 
-                # 2) Codex: gratis en dólares (va contra la suscripción), pero
-                #    ~35 s por imagen. Solo para lo que ARASAAC no tiene.
-                if raw is None:
-                    raw = await _from_codex(client, word, style)
-                    fuente = FUENTE_CODEX
+                    # 2) Codex: gratis en dólares (va contra la suscripción), pero
+                    #    ~35 s por imagen. Solo para lo que ARASAAC no tiene.
+                    if raw is None:
+                        raw = await _from_codex(client, word, style, theme)
+                        fuente = FUENTE_CODEX
 
                 # 3) FLUX.2 Pro: respaldo intermedio cuando el puente no está,
                 #    se cayó o se agotó la cuota. ~$0,03, ~10 s.
                 if raw is None:
-                    raw = await _from_flux(client, settings.openrouter_key, word, style)
+                    raw = await _from_flux(client, settings.openrouter_key, word, style, theme)
                     fuente = FUENTE_FLUX
 
                 # 4) OpenRouter (modelo por defecto): red de seguridad final,
@@ -470,7 +593,7 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
                         return word, None
                     try:
                         raw = await _request_image(
-                            client, settings.openrouter_key, model, build_prompt(word, style)
+                            client, settings.openrouter_key, model, build_prompt(word, style, theme)
                         )
                         fuente = FUENTE_IA
                     except Exception as exc:
@@ -502,6 +625,9 @@ async def generate_images(settings: AISettings, words: dict[str, str]) -> dict[s
     de_cache = len(words) - len(pending)
     de_arasaac = sum(1 for f in origen.values() if f == FUENTE_ARASAAC)
     de_codex = sum(1 for f in origen.values() if f == FUENTE_CODEX)
+    if preferir_ia and settings.openrouter_key:
+        results = await _revisar_y_rehacer(settings, words, results, origen, theme)
+
     de_flux = sum(1 for f in origen.values() if f == FUENTE_FLUX)
     de_ia = sum(1 for f in origen.values() if f == FUENTE_IA)
     logger.info(
