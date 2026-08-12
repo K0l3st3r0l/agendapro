@@ -16,7 +16,7 @@ import os
 import time
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -482,6 +482,63 @@ async def generar_storyboard(
 # dos personas comparten una clase, se agrega entonces.
 
 
+async def _resolver_assets_en_fondo(lesson_id: int, user_id: int) -> None:
+    """Resuelve las imágenes de una clase sin que el cliente tenga que pedirlo.
+
+    Antes esto dependía de una segunda llamada del frontend, y bastaba con que
+    la profesora tuviera la pestaña abierta desde antes del despliegue, navegara
+    rápido o fuera directo a presentar para que la clase quedara sin imágenes
+    para siempre. La resolución es responsabilidad del servidor: el navegador no
+    tiene por qué ser el que la garantice.
+    """
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        fila = db.query(Lesson).filter(Lesson.id == lesson_id, Lesson.user_id == user_id).first()
+        if not fila:
+            return
+        spec = LessonSpec(**lesson_schema.completar_mundo_visual(dict(fila.spec)))
+        pendientes = {a.query: "photo" for a in spec.assets if a.status != "ready" and a.query}
+        if not pendientes:
+            return
+
+        settings = get_user_settings(user_id, db)
+        urls = await images.generate_images(
+            settings, pendientes, preferir_ia=True, theme=spec.metadata.visual_theme
+        )
+        for asset in spec.assets:
+            if asset.status == "ready":
+                continue
+            url = urls.get(asset.query)
+            if url:
+                asset.uri, asset.status = url, "ready"
+                asset.source = "builtin" if url.endswith(".svg") else "generated"
+            else:
+                asset.status = "failed"
+
+        # Se relee la fila: la profesora pudo haber guardado ediciones mientras
+        # las imágenes se generaban, y perdérselas sería peor que no tener fotos.
+        actual = db.query(Lesson).filter(Lesson.id == lesson_id, Lesson.user_id == user_id).first()
+        if not actual:
+            return
+        vigente = dict(actual.spec)
+        por_query = {a.query: a for a in spec.assets}
+        for asset in vigente.get("assets", []):
+            resuelto = por_query.get(asset.get("query"))
+            if resuelto and resuelto.status == "ready":
+                asset.update({"uri": resuelto.uri, "status": "ready", "source": resuelto.source})
+        actual.spec = vigente
+        flag_modified(actual, "spec")
+        db.commit()
+        listos = sum(1 for a in vigente.get("assets", []) if a.get("status") == "ready")
+        logger.info("Imágenes de la clase %d resueltas en segundo plano: %d listas", lesson_id, listos)
+    except Exception as exc:
+        logger.warning("No se pudieron resolver las imágenes de la clase %d: %s", lesson_id, exc)
+    finally:
+        db.close()
+
+
 class LessonSave(BaseModel):
     spec: LessonSpec
     status: str = Field("draft", max_length=20)
@@ -520,6 +577,7 @@ def _resumen(fila: Lesson) -> dict:
 @router.post("", response_model=dict)
 async def crear_clase(
     data: LessonSave,
+    tareas: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -536,6 +594,7 @@ async def crear_clase(
     db.add(fila)
     db.commit()
     db.refresh(fila)
+    tareas.add_task(_resolver_assets_en_fondo, fila.id, current_user.id)
     return {"id": fila.id, "message": "Clase guardada"}
 
 
@@ -567,6 +626,7 @@ async def obtener_clase(
 @router.get("/{lesson_id}/present", response_model=dict)
 async def presentar_clase(
     lesson_id: int,
+    tareas: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -578,6 +638,10 @@ async def presentar_clase(
     """
     fila = _buscar(db, lesson_id, current_user.id)
     spec = lesson_schema.completar_mundo_visual(dict(fila.spec))
+    # Última red: si una clase llega al proyector sin imágenes, se disparan igual
+    # para la próxima vez. No bloquea la presentación de hoy.
+    if any(a.get("status") == "pending" for a in spec.get("assets", [])):
+        tareas.add_task(_resolver_assets_en_fondo, lesson_id, current_user.id)
     return {
         "id": fila.id,
         "title": fila.title,
@@ -619,6 +683,7 @@ class RegenerateRequest(BaseModel):
 async def regenerar_clase(
     lesson_id: int,
     data: RegenerateRequest,
+    tareas: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -672,6 +737,7 @@ async def regenerar_clase(
         lesson_id, result.provider, result.model, len(spec.scenes), elapsed_ms,
         f", indicación: {data.instructions[:60]}" if data.instructions else "",
     )
+    tareas.add_task(_resolver_assets_en_fondo, fila.id, current_user.id)
     return {
         "id": fila.id,
         "spec": spec.model_dump(),
