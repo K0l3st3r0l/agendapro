@@ -74,6 +74,10 @@ export const lessonsAPI = {
   remove: (id: number) => api.delete(`/lessons/${id}`),
   // Resolver imágenes va aparte de guardar: la mayoría se dibuja o sale de
   // ARASAAC en menos de un segundo, pero una que caiga a la IA puede tardar.
+  // Genera de nuevo con los mismos parámetros curriculares; `instructions`
+  // permite dirigir el segundo intento en vez de repetir el dado.
+  regenerate: (id: number, instructions = '') =>
+    api.post(`/lessons/${id}/regenerate`, { instructions }, { timeout: 300000 }),
   resolveAssets: (id: number) => api.post(`/lessons/${id}/assets`, {}, { timeout: 180000 }),
 };
 

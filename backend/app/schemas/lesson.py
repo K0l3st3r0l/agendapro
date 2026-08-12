@@ -139,6 +139,44 @@ MAX_PALABRAS_QUERY = 3
 _GRADE_NUM = re.compile(r"(\d+)")
 
 
+# Mundo por asignatura, para las clases guardadas antes de que existieran los
+# mundos visuales. Sin esto una clase de Lenguaje se proyecta con la paleta azul
+# de Matemática, que es el default del campo. Solo se usa cuando el spec no trae
+# `visual_theme`: en las clases nuevas lo elige la IA por el contenido, que
+# afina más que la asignatura.
+_MUNDO_POR_ASIGNATURA = {
+    "matemática": "numeros",
+    "lenguaje": "palabras",
+    "ciencias naturales": "naturaleza",
+    "historia": "comunidad",
+    "educación física": "cuerpo",
+    "artes": "arte",
+    "música": "arte",
+    "tecnología": "numeros",
+    "orientación": "cuerpo",
+    "inglés": "palabras",
+}
+
+
+def mundo_por_asignatura(subject: str) -> str:
+    s = (subject or "").lower()
+    for clave, mundo in _MUNDO_POR_ASIGNATURA.items():
+        if clave in s:
+            return mundo
+    return "numeros"
+
+
+def completar_mundo_visual(spec: dict) -> dict:
+    """Rellena `visual_theme` en specs anteriores al campo, sin tocar la BD."""
+    metadata = spec.get("metadata") or {}
+    if not metadata.get("visual_theme"):
+        metadata["visual_theme"] = mundo_por_asignatura(
+            (spec.get("curriculum") or {}).get("subject", "")
+        )
+        spec["metadata"] = metadata
+    return spec
+
+
 def nivel_de(grade_level: str) -> str:
     """'inicial' para 1° y 2° Básico, 'estandar' para el resto.
 

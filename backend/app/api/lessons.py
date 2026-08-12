@@ -561,7 +561,7 @@ async def obtener_clase(
 ):
     """Versión completa, con notas del docente. Es la que abre el editor."""
     fila = _buscar(db, lesson_id, current_user.id)
-    return {**_resumen(fila), "spec": fila.spec}
+    return {**_resumen(fila), "spec": lesson_schema.completar_mundo_visual(dict(fila.spec))}
 
 
 @router.get("/{lesson_id}/present", response_model=dict)
@@ -577,10 +577,11 @@ async def presentar_clase(
     del curso para leerlas.
     """
     fila = _buscar(db, lesson_id, current_user.id)
+    spec = lesson_schema.completar_mundo_visual(dict(fila.spec))
     return {
         "id": fila.id,
         "title": fila.title,
-        "spec": lesson_schema.public_spec(LessonSpec(**fila.spec)),
+        "spec": lesson_schema.public_spec(LessonSpec(**spec)),
     }
 
 
@@ -601,6 +602,83 @@ async def actualizar_clase(
     fila.spec = spec.model_dump()
     db.commit()
     return {"id": fila.id, "message": "Clase actualizada"}
+
+
+class RegenerateRequest(BaseModel):
+    """Indicación opcional para el nuevo intento.
+
+    Regenerar sin poder decir qué cambiar es una lotería: se vuelve a tirar el
+    dado esperando que salga mejor. Con una frase —"más simple", "usa ejemplos
+    de la feria"— la profesora dirige el segundo intento en vez de repetirlo.
+    """
+
+    instructions: str = Field("", max_length=1500)
+
+
+@router.post("/{lesson_id}/regenerate", response_model=dict)
+async def regenerar_clase(
+    lesson_id: int,
+    data: RegenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Vuelve a proponer la clase con los mismos parámetros curriculares.
+
+    Los parámetros salen del spec guardado —nivel, asignatura, tema, OA y número
+    de láminas—, así que no hace falta recordar el formulario original.
+
+    Reemplaza el contenido: lo que la profesora haya editado a mano se pierde. El
+    frontend lo advierte antes de llamar acá.
+    """
+    fila = _buscar(db, lesson_id, current_user.id)
+    anterior = LessonSpec(**fila.spec)
+
+    req = StoryboardRequest(
+        grade_level=anterior.curriculum.grade_level,
+        subject=anterior.curriculum.subject,
+        topic=anterior.metadata.topic or anterior.metadata.title or "Clase",
+        unit=anterior.curriculum.unit,
+        duration_minutes=anterior.duration_minutes,
+        lesson_kind=anterior.metadata.lesson_kind,
+        oa_refs=anterior.curriculum.oa_refs,
+        indicator_refs=anterior.curriculum.indicator_refs,
+        instructions=data.instructions,
+        # Mismo número de láminas que tenía: la profesora ya lo eligió una vez.
+        scene_count=len(anterior.scenes),
+    )
+
+    settings = get_user_settings(current_user.id, db)
+    curriculum, bloque = _resolver_curriculum(db, req)
+    prompt = _build_prompt(req, bloque)
+
+    inicio = time.monotonic()
+    draft, result = await _generar_validado(
+        settings, prompt, req.grade_level, None, req.scene_count
+    )
+    elapsed_ms = int((time.monotonic() - inicio) * 1000)
+
+    spec = build_spec(
+        draft, curriculum=curriculum,
+        duration_minutes=req.duration_minutes, audience=req.grade_level,
+    )
+
+    fila.title = spec.metadata.title or spec.metadata.topic or fila.title
+    fila.spec = spec.model_dump()
+    flag_modified(fila, "spec")
+    db.commit()
+
+    logger.info(
+        "Clase %d regenerada: %s/%s — %d escenas, %d ms%s",
+        lesson_id, result.provider, result.model, len(spec.scenes), elapsed_ms,
+        f", indicación: {data.instructions[:60]}" if data.instructions else "",
+    )
+    return {
+        "id": fila.id,
+        "spec": spec.model_dump(),
+        "model_used": result.model,
+        "elapsed_ms": elapsed_ms,
+        "message": "Clase regenerada",
+    }
 
 
 @router.post("/{lesson_id}/assets", response_model=dict)

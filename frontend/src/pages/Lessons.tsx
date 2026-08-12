@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { PresentationChartLineIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, PresentationChartLineIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { lessonsAPI } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import { Button } from '../components/ui/Button';
@@ -15,6 +15,9 @@ export default function Lessons() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [porBorrar, setPorBorrar] = useState<LessonSummary | null>(null);
+  const [porRegenerar, setPorRegenerar] = useState<LessonSummary | null>(null);
+  const [indicaciones, setIndicaciones] = useState('');
+  const [regenerando, setRegenerando] = useState(false);
 
   const cargar = () => {
     setCargando(true);
@@ -38,6 +41,26 @@ export default function Lessons() {
       toast.error('No se pudo eliminar la clase');
     } finally {
       setPorBorrar(null);
+    }
+  };
+
+  const regenerar = async () => {
+    if (!porRegenerar) return;
+    setRegenerando(true);
+    const clase = porRegenerar;
+    try {
+      const r = await lessonsAPI.regenerate(clase.id, indicaciones);
+      toast.success(`Clase nueva en ${(r.data.elapsed_ms / 1000).toFixed(0)} s`);
+      setPorRegenerar(null);
+      setIndicaciones('');
+      // Las imágenes de la clase anterior ya no corresponden al contenido nuevo.
+      lessonsAPI.resolveAssets(clase.id).catch(() => {});
+      navigate(`/clases/${clase.id}/editar`);
+    } catch (e: unknown) {
+      const detalle = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(typeof detalle === 'string' ? detalle : 'No se pudo regenerar la clase');
+    } finally {
+      setRegenerando(false);
     }
   };
 
@@ -96,6 +119,14 @@ export default function Lessons() {
                 <Link to={`/clases/${c.id}/editar`}>
                   <Button variant="secondary">Editar</Button>
                 </Link>
+                <Button
+                  variant="secondary"
+                  onClick={() => setPorRegenerar(c)}
+                  aria-label={`Regenerar ${c.title}`}
+                  title="Volver a proponer la clase"
+                >
+                  <ArrowPathIcon className="w-5 h-5" />
+                </Button>
                 <Button variant="ghost" onClick={() => setPorBorrar(c)} aria-label={`Eliminar ${c.title}`}>
                   Eliminar
                 </Button>
@@ -104,6 +135,44 @@ export default function Lessons() {
           ))}
         </ul>
       )}
+
+      <AppDialog
+        open={porRegenerar !== null}
+        onClose={() => { setPorRegenerar(null); setIndicaciones(''); }}
+        title="Regenerar la clase"
+        description={`La IA propondrá "${porRegenerar?.title}" de nuevo, con el mismo objetivo de aprendizaje y la misma cantidad de láminas.`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => { setPorRegenerar(null); setIndicaciones(''); }} disabled={regenerando}>
+              Cancelar
+            </Button>
+            <Button onClick={regenerar} busy={regenerando} disabled={regenerando}>
+              {regenerando ? 'Proponiendo…' : 'Regenerar'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/30 rounded-lg p-3">
+            El contenido actual se reemplaza. Si editaste algún texto a mano, se pierde.
+          </p>
+          <label className="block">
+            <span className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              ¿Qué te gustaría cambiar? <span className="font-normal text-gray-500">opcional</span>
+            </span>
+            <textarea
+              className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              rows={2}
+              value={indicaciones}
+              onChange={(e) => setIndicaciones(e.target.value)}
+              placeholder="Más simple, con ejemplos del patio del colegio."
+            />
+            <span className="block text-xs text-gray-500 mt-1">
+              Sin indicaciones, la IA propone otra versión del mismo tema.
+            </span>
+          </label>
+        </div>
+      </AppDialog>
 
       <AppDialog
         open={porBorrar !== null}
